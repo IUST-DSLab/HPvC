@@ -12,5 +12,9 @@
 hs_err_pid*
 
 # C
-.o
+*.o
 a.out
+*.swp
+*.swo
+vhpc
+lib

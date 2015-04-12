@@ -9,7 +9,7 @@ void _exit(int status);
 void log_err(char *err);
 void err_exit(char *err);
 
-IMachine *find_machine(char *vmname);
+void find_machine(char *vmname, IMachine **machine);
 
 IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
     IMachine *machine;
     BSTR snapshot_folder_utf16;
     char *snapshot_folder;
-    machine = find_machine("Fedora");
+    find_machine("Fedora", &machine);
     rc = IMachine_get_SnapshotFolder(machine, &snapshot_folder_utf16);
     if (FAILED(rc) | !snapshot_folder_utf16) {
       err_exit("Failed to get memory size of machine.");
@@ -60,7 +60,13 @@ int main(int argc, char *argv[]) {
     g_pVBoxFuncs->pfnUtf8Free(snapshot_folder);
     g_pVBoxFuncs->pfnComUnallocString(snapshot_folder_utf16);
 
+    IProgress *progress;
+    BSTR type, env;
+    g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
+    rc = IMachine_LaunchVMProcess(machine, session, type, env, &progress);
+    g_pVBoxFuncs->pfnUtf16Free(type);
 
+    sleep(20);
     _exit(0);
 }
 
@@ -92,10 +98,11 @@ void err_exit(char *err) {
   _exit(1);
 }
 
-IMachine *find_machine(char *vmname) {
+void find_machine(char *vmname, IMachine **machine) {
+  HRESULT rc;
   BSTR vmname_utf16;
   g_pVBoxFuncs->pfnUtf8ToUtf16(vmname, &vmname_utf16);
-  rc = IVirtualBox_FindMachine(vbox, vmname_utf16, &machine);
+  rc = IVirtualBox_FindMachine(vbox, vmname_utf16, machine);
   if (FAILED(rc) | !machine) {
     err_exit("Could not find machine.");
   }

@@ -13,8 +13,14 @@ hs_err_pid*
 
 # C
 *.o
+*.a
 a.out
 *.swp
 *.swo
+*.cmake
 vhpc
 lib
+Makefile
+sdk
+CMakeFiles
+CMakeCache.txt

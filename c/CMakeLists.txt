@@ -9,6 +9,10 @@ include_directories(${PROJECT_SOURCE_DIR}/sdk/bindings/xpcom/include)
 add_library(VBoxCAPIGlue ${PROJECT_SOURCE_DIR}/sdk/bindings/c/glue/VBoxCAPIGlue.c)
 include_directories (${PROJECT_SOURCE_DIR}/sdk/bindings/c/glue)
 
+include_directories (${PROJECT_SOURCE_DIR}/utils)
+include_directories (${PROJECT_SOURCE_DIR}/executer)
+include_directories (${PROJECT_SOURCE_DIR}/organizer)
+
 
 add_subdirectory (utils)
 add_subdirectory (executer)

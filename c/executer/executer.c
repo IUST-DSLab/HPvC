@@ -30,12 +30,12 @@ void _start_vm(IMachine *machine) {
     HRESULT rc;
     g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
     rc = IMachine_LaunchVMProcess(machine, session, type, env, &progress);
-    /*if (FAILED(rc)) {*/
-      /*err_exit("Failed to start vm.");*/
-    /*}*/
+    if (FAILED(rc)) {
+      err_exit("Failed to start vm.");
+    }
     g_pVBoxFuncs->pfnUtf16Free(type);
 
-    sleep(20);
+    IProgress_WaitForCompletion(progress, -1);
 }
 
 void executer_init() {
@@ -82,10 +82,8 @@ void executer_onexit() {
 void start_vm(char *name) {
   // Find machine
   IMachine *machine;
-  find_machine("Fedora", &machine);
+  _find_machine(name, &machine);
   _start_vm(machine);
-
-
 }
 
 /*int main(int argc, char *argv[]) {*/

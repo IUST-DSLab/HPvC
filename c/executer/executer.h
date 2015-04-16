@@ -1,6 +1,7 @@
 #ifndef EXECUTER_H
 #define EXECUTER_H
 
+#include "VBoxCAPIGlue.h"
 
 // Private
 void _find_machine(char *vmname, IMachine **machine);

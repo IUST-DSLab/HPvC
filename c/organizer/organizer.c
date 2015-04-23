@@ -1,7 +1,11 @@
 #include <stdio.h>
 
+#include "executer.h"
 
 
-int main(int argc, char *argv[]) {
-  return 0;
+
+void organizer_init();
+
+void organizer_init() {
+  //start_vm("Fedora");
 }

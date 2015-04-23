@@ -1,10 +1,11 @@
 #include "executer.h"
+#include "organizer.h"
 #include "utils.h"
 
 int main(int argc, char *argv[]) {
 
   executer_init();
-  start_vm("Fedora");
+  organizer_init();
 
   _exit(0);
 }

@@ -20,5 +20,8 @@ add_subdirectory(utils)
 add_subdirectory(executer)
 add_subdirectory(organizer)
 
+link_directories(
+  /usr/local/lib
+)
 add_executable(vhpc vhpc.c)
-target_link_libraries(vhpc LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS} utils executer organizer XPCOM VBoxCAPIGlue)
+target_link_libraries(vhpc LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS} czmq utils executer organizer XPCOM VBoxCAPIGlue)

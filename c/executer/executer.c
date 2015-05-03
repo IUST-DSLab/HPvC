@@ -14,6 +14,9 @@
 IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
 ISession *session = NULL;
+ISession *tp_session = NULL;
+
+zactor_t *comm;
 
 void _find_machine(char *vmname, IMachine **machine) {
   HRESULT rc;
@@ -26,12 +29,12 @@ void _find_machine(char *vmname, IMachine **machine) {
   g_pVBoxFuncs->pfnUtf16Free(vmname_utf16);
 }
 
-void _start_vm(IMachine *machine) {
+void _start_vm(IMachine *machine, ISession *sess) {
     IProgress *progress;
     BSTR type, env;
     HRESULT rc;
     g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
-    rc = IMachine_LaunchVMProcess(machine, session, type, env, &progress);
+    rc = IMachine_LaunchVMProcess(machine, sess, type, env, &progress);
     if (FAILED(rc)) {
       err_exit("Failed to start vm.");
     }
@@ -43,6 +46,7 @@ void _start_vm(IMachine *machine) {
 void comm_actor(zsock_t *pipe, void *args) {
   zsock_signal(pipe, 0);
 
+  HRESULT rc;
   zsock_t *listener = zsock_new_rep("tcp://127.0.0.1:23432");
   zsock_t *sender;
   zpoller_t *poller = zpoller_new(pipe, listener, NULL);
@@ -52,6 +56,50 @@ void comm_actor(zsock_t *pipe, void *args) {
   if (!zpoller_terminated(poller)) {
     if (which == listener) {
       char *smsg = zstr_recv(which);
+      // Target teleport init
+      if (*smsg == '1') {
+        IMachine *tp_machine;
+        _find_machine("tp-tptest", &tp_machine);
+        rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
+        if (FAILED(rc) || !tp_session) {
+          err_exit("Could not get Session reference for teleport.");
+        }
+        IMachine_LockMachine(tp_machine, tp_session, LockType_Write);
+        ISession_get_Machine(tp_session, &tp_machine);
+        IMachine_SetTeleporterEnabled(tp_machine, true);
+        BSTR hostnameu;
+        g_pVBoxFuncs->pfnUtf8ToUtf16("172.17.10.123", &hostnameu);
+        IMachine_SetTeleporterAddress(tp_machine, hostnameu);
+        g_pVBoxFuncs->pfnUtf16Free(hostnameu);
+        IMachine_SetTeleporterPort(tp_machine, 87678);
+        /*IConsole_SetUseHostClipboard(true);*/
+        IMachine_SaveSettings(tp_machine);
+        ISession_UnlockMachine(tp_session);
+
+        ISession_Release(session);
+        session = NULL;
+        IMachine_Release(tp_machine);
+        tp_machine = NULL;
+
+        rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
+        if (FAILED(rc) || !tp_session) {
+          err_exit("Could not get Session reference for teleport.");
+        }
+        _find_machine("tp_tptest", &tp_machine);
+        _start_vm(tp_machine, tp_session);
+
+        zstr_send(listener, "2");
+      } else if (*smsg == '2') {
+        // Source do teleport
+        IConsole *console;
+        ISession_get_Console(session, &console);
+
+        BSTR hostnameu, passu;
+        g_pVBoxFuncs->pfnUtf8ToUtf16("172.17.10.103", &hostnameu);
+        /*g_pVBoxFuncs->pfnUtf8ToUtf16("123", &passu);*/
+        rc = IConsole_Teleport(console, hostnameu, 87678, NULL, 2000, NULL);
+        g_pVBoxFuncs->pfnUtf16Free(hostnameu);
+      }
       printf("%s\n", smsg);
       free(smsg);
     } else {
@@ -68,7 +116,11 @@ void comm_actor(zsock_t *pipe, void *args) {
         // Migration begin
         if (*smsg == '1') {
           char *ip = smsg + 1;
+          char addr[50];
           printf("Migration begin: %s\n", ip);
+          sprintf(addr, "tcp://%s:%d", ip, 23432);
+          sender = zsock_new_req(addr);
+          zstr_send(sender, "1");
           zstr_send(pipe, "ok");
         }
         printf("%s\n", smsg);
@@ -106,14 +158,7 @@ void executer_init() {
     err_exit("Could not get Session reference");
   }
 
-  zactor_t *comm = zactor_new(comm_actor, NULL);
-
-  zstr_send(comm, "1172.17.10.122");
-  char *st = zstr_recv(comm);
-  printf("%s\n", st);
-  free(st);
-  zactor_destroy(&comm);
-
+  comm = zactor_new(comm_actor, NULL);
 }
 
 void executer_onexit() {
@@ -129,6 +174,7 @@ void executer_onexit() {
     IVirtualBoxClient_Release(vboxclient);
     vboxclient = NULL;
   }
+  zactor_destroy(&comm);
 
   g_pVBoxFuncs->pfnClientUninitialize();
   VBoxCGlueTerm();
@@ -138,7 +184,16 @@ void start_vm(char *name) {
   // Find machine
   IMachine *machine;
   _find_machine(name, &machine);
-  _start_vm(machine);
+  _start_vm(machine, session);
+}
+
+void teleport(char *name, char *target) {
+  char msg[50];
+  sprintf(msg, "1%s", target);
+  zstr_send(comm, msg);
+  char *st = zstr_recv(comm);
+  printf("%s\n", st);
+  free(st);
 }
 
 /*int main(int argc, char *argv[]) {*/

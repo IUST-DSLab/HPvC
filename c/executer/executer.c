@@ -20,7 +20,17 @@ ISession *tp_session = NULL;
 zactor_t *comm;
 
 int main(int argc, char *argv[]) {
-  printf("Executer started.");
+  printf("Executer started.\n");
+  zsock_t *organizer_sock = zsock_new_rep("tcp://127.0.0.1:98789");
+
+  Teleport *tpm;
+  char *smsg = zstr_recv(organizer_sock);
+  int len = strlen(smsg);
+  tpm = teleport__unpack(NULL, len, smsg);
+  printf("%s %s", tpm->vm_name, tpm->target_ip);
+  /*printf("%s\n", smsg);*/
+  zstr_free(&smsg);
+  zsock_destroy(&organizer_sock);
   return 0;
 }
 

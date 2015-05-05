@@ -21,8 +21,8 @@ a.out
 *.pb-c.c
 *.pb-c.h
 vhpc
-executer
-organizer
+/c/executer/executer
+/c/organizer/organizer
 lib
 Makefile
 sdk

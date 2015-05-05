@@ -8,6 +8,7 @@
 
 #include "executer.h"
 #include "utils.h"
+#include "oe.pb-c.h"
 
 
 
@@ -17,6 +18,11 @@ ISession *session = NULL;
 ISession *tp_session = NULL;
 
 zactor_t *comm;
+
+int main(int argc, char *argv[]) {
+  printf("Executer started.");
+  return 0;
+}
 
 void _find_machine(char *vmname, IMachine **machine) {
   HRESULT rc;
@@ -194,6 +200,19 @@ void teleport(char *name, char *target) {
   char *st = zstr_recv(comm);
   printf("%s\n", st);
   free(st);
+}
+void log_err(char *err) {
+  fprintf(stderr, err);
+}
+
+void _exit(int status) {
+  executer_onexit();
+  exit(status);
+}
+
+void err_exit(char *err) {
+  log_err(err);
+  _exit(1);
 }
 
 /*int main(int argc, char *argv[]) {*/

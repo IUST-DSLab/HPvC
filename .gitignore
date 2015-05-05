@@ -18,7 +18,11 @@ a.out
 *.swp
 *.swo
 *.cmake
+*.pb-c.c
+*.pb-c.h
 vhpc
+executer
+organizer
 lib
 Makefile
 sdk

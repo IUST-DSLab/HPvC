@@ -31,6 +31,31 @@ int main(int argc, char *argv[]) {
   /*printf("%s\n", smsg);*/
   zstr_free(&smsg);
   zsock_destroy(&organizer_sock);
+
+
+  ULONG revision = 0;
+  HRESULT rc;
+
+  // Initialize objects
+  if (VBoxCGlueInit()) {
+    err_exit(g_szVBoxErrMsg);
+  }
+
+  g_pVBoxFuncs->pfnClientInitialize(NULL, &vboxclient);
+  if (!vboxclient) {
+    err_exit("Failed to initialize client.");
+  }
+  rc = IVirtualBoxClient_get_VirtualBox(vboxclient, &vbox);
+  if (FAILED(rc) || !vbox) {
+    err_exit("Could not get VirtualBox reference");
+  }
+  rc = IVirtualBoxClient_get_Session(vboxclient, &session);
+  if (FAILED(rc) || !session) {
+    err_exit("Could not get Session reference");
+  }
+
+  comm = zactor_new(comm_actor, NULL);
+
   return 0;
 }
 
@@ -152,50 +177,6 @@ void comm_actor(zsock_t *pipe, void *args) {
   printf("%s\n", "Actor finished.");
 }
 
-void executer_init() {
-  ULONG revision = 0;
-  HRESULT rc;
-
-  // Initialize objects
-  if (VBoxCGlueInit()) {
-    err_exit(g_szVBoxErrMsg);
-  }
-
-  g_pVBoxFuncs->pfnClientInitialize(NULL, &vboxclient);
-  if (!vboxclient) {
-    err_exit("Failed to initialize client.");
-  }
-  rc = IVirtualBoxClient_get_VirtualBox(vboxclient, &vbox);
-  if (FAILED(rc) || !vbox) {
-    err_exit("Could not get VirtualBox reference");
-  }
-  rc = IVirtualBoxClient_get_Session(vboxclient, &session);
-  if (FAILED(rc) || !session) {
-    err_exit("Could not get Session reference");
-  }
-
-  comm = zactor_new(comm_actor, NULL);
-}
-
-void executer_onexit() {
-  if (session) {
-    ISession_Release(session);
-    session = NULL;
-  }
-  if (vbox) {
-    IVirtualBox_Release(vbox);
-    vbox = NULL;
-  }
-  if (vboxclient) {
-    IVirtualBoxClient_Release(vboxclient);
-    vboxclient = NULL;
-  }
-  zactor_destroy(&comm);
-
-  g_pVBoxFuncs->pfnClientUninitialize();
-  VBoxCGlueTerm();
-}
-
 void start_vm(char *name) {
   // Find machine
   IMachine *machine;
@@ -216,7 +197,23 @@ void log_err(char *err) {
 }
 
 void _exit(int status) {
-  executer_onexit();
+  if (session) {
+    ISession_Release(session);
+    session = NULL;
+  }
+  if (vbox) {
+    IVirtualBox_Release(vbox);
+    vbox = NULL;
+  }
+  if (vboxclient) {
+    IVirtualBoxClient_Release(vboxclient);
+    vboxclient = NULL;
+  }
+  zactor_destroy(&comm);
+
+  g_pVBoxFuncs->pfnClientUninitialize();
+  VBoxCGlueTerm();
+
   exit(status);
 }
 

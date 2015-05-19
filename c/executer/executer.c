@@ -10,7 +10,17 @@
 #include "utils.h"
 #include "oe.pb-c.h"
 
+#define TP_PASS "123"
+#define TP_PORT 23632
+#define TP_SOURCE "172.17.10.80"
+#define TP_TARGET "172.17.8.79"
 
+
+
+struct VMMetadata {
+  char *home;
+  char **history;
+};
 
 IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
@@ -21,16 +31,16 @@ zactor_t *comm;
 
 int main(int argc, char *argv[]) {
   printf("Executer started.\n");
-  zsock_t *organizer_sock = zsock_new_rep("tcp://127.0.0.1:98789");
+/*  zsock_t *organizer_sock = zsock_new_rep("tcp://127.0.0.1:98789");*/
 
-  Teleport *tpm;
-  char *smsg = zstr_recv(organizer_sock);
-  int len = strlen(smsg);
-  tpm = teleport__unpack(NULL, len, smsg);
-  printf("%s %s", tpm->vm_name, tpm->target_ip);
-  /*printf("%s\n", smsg);*/
-  zstr_free(&smsg);
-  zsock_destroy(&organizer_sock);
+  /*Teleport *tpm;*/
+  /*char *smsg = zstr_recv(organizer_sock);*/
+  /*int len = strlen(smsg);*/
+  /*tpm = teleport__unpack(NULL, len, smsg);*/
+  /*printf("%s %s", tpm->vm_name, tpm->target_ip);*/
+  /*[>printf("%s\n", smsg);<]*/
+  /*zstr_free(&smsg);*/
+  /*zsock_destroy(&organizer_sock);*/
 
 
   ULONG revision = 0;
@@ -56,7 +66,11 @@ int main(int argc, char *argv[]) {
 
   comm = zactor_new(comm_actor, NULL);
 
-  return 0;
+  /*sleep(2);*/
+  /*zstr_send(comm, "1");*/
+
+  sleep(60);
+  _exit(0);
 }
 
 void _find_machine(char *vmname, IMachine **machine) {
@@ -88,64 +102,105 @@ void comm_actor(zsock_t *pipe, void *args) {
   zsock_signal(pipe, 0);
 
   HRESULT rc;
-  zsock_t *listener = zsock_new_rep("tcp://127.0.0.1:23432");
+  zsock_t *listener = zsock_new_rep("tcp://0.0.0.0:23432");
   zsock_t *sender;
   zpoller_t *poller = zpoller_new(pipe, listener, NULL);
   if (!poller) err_exit("Poller was not created.\n");
 
-  zsock_t *which = zpoller_wait(poller, -1);
-  if (!zpoller_terminated(poller)) {
-    if (which == listener) {
-      char *smsg = zstr_recv(which);
-      // Target teleport init
-      if (*smsg == '1') {
-        IMachine *tp_machine;
-        _find_machine("tp-tptest", &tp_machine);
-        rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
-        if (FAILED(rc) || !tp_session) {
-          err_exit("Could not get Session reference for teleport.");
+  bool terminated = false;
+  while (!terminated) {
+    zsock_t *which = zpoller_wait(poller, -1);
+    if (!zpoller_terminated(poller)) {
+      if (which == listener) {
+        char *smsg = zstr_recv(listener);
+        printf("%s\n", smsg);
+        // Target teleport init
+        if (*smsg == '1') {
+          IMachine *tp_machine;
+          _find_machine("fdr", &tp_machine);
+          rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
+          if (FAILED(rc) || !tp_session) {
+            err_exit("Could not get Session reference for teleport.");
+          }
+          IMachine_LockMachine(tp_machine, tp_session, LockType_Write);
+          ISession_get_Machine(tp_session, &tp_machine);
+          IMachine_SetTeleporterEnabled(tp_machine, true);
+          BSTR hostnameu, passu;
+          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_TARGET, &hostnameu);
+          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_PASS, &passu);
+          IMachine_SetTeleporterAddress(tp_machine, hostnameu);
+          IMachine_SetTeleporterPassword(tp_machine, passu);
+          g_pVBoxFuncs->pfnUtf16Free(hostnameu);
+          IMachine_SetTeleporterPort(tp_machine, TP_PORT);
+          /*IConsole_SetUseHostClipboard(true);*/
+          IMachine_SaveSettings(tp_machine);
+          ISession_UnlockMachine(tp_session);
+
+          ISession_Release(tp_session);
+          tp_session = NULL;
+          IMachine_Release(tp_machine);
+          tp_machine = NULL;
+
+          rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
+          if (FAILED(rc) || !tp_session) {
+            err_exit("Could not get Session reference for teleport.");
+          }
+          _find_machine("fdr", &tp_machine);
+          sleep(1);
+          /*_start_vm(tp_machine, tp_session);*/
+
+          IProgress *tp_progress;
+          BSTR type, env;
+          g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
+          rc = IMachine_LaunchVMProcess(tp_machine, tp_session, type, env, &tp_progress);
+          if (FAILED(rc)) {
+            err_exit("Failed to start vm.");
+          }
+          g_pVBoxFuncs->pfnUtf16Free(type);
+
+          sleep(3);
+
+          zstr_send(listener, "2");
+
+          IProgress_WaitForCompletion(tp_progress, -1);
+          ISession_UnlockMachine(tp_session);
         }
-        IMachine_LockMachine(tp_machine, tp_session, LockType_Write);
-        ISession_get_Machine(tp_session, &tp_machine);
-        IMachine_SetTeleporterEnabled(tp_machine, true);
-        BSTR hostnameu;
-        g_pVBoxFuncs->pfnUtf8ToUtf16("172.17.10.123", &hostnameu);
-        IMachine_SetTeleporterAddress(tp_machine, hostnameu);
-        g_pVBoxFuncs->pfnUtf16Free(hostnameu);
-        IMachine_SetTeleporterPort(tp_machine, 87678);
-        /*IConsole_SetUseHostClipboard(true);*/
-        IMachine_SaveSettings(tp_machine);
-        ISession_UnlockMachine(tp_session);
+        zstr_free(&smsg);
+      } else if (sender && (which == sender)) {
+        char *smsg = zstr_recv(sender);
+        if (*smsg == '2') {
+          // Source do teleport
+          IMachine *tp_machine;
+          rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
+          if (FAILED(rc) || !tp_session) {
+            err_exit("Could not get session for teleport.\n");
+          }
+          _find_machine("fdr", &tp_machine);
+          _start_vm(tp_machine, tp_session);
 
-        ISession_Release(session);
-        session = NULL;
-        IMachine_Release(tp_machine);
-        tp_machine = NULL;
+          IConsole *tp_console;
+          rc = ISession_get_Console(tp_session, &tp_console);
+          if (FAILED(rc) || !tp_console) {
+            log_err("Couldnt get console for session in teleport.\n");
+          }
 
-        rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
-        if (FAILED(rc) || !tp_session) {
-          err_exit("Could not get Session reference for teleport.");
+          IProgress *progress;
+          BSTR hostnameu, passu;
+          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_SOURCE, &hostnameu);
+          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_PASS, &passu);
+          rc = IConsole_Teleport(tp_console, hostnameu, TP_PORT, passu, 250, &progress);
+          if (FAILED(rc)) {
+            log_err("Teleport Failed. ");
+            printf("Retrun code %x\n", rc);
+          }
+          g_pVBoxFuncs->pfnUtf16Free(hostnameu);
+          g_pVBoxFuncs->pfnUtf16Free(passu);
+
+          IProgress_WaitForCompletion(progress, -1);
+          printf("Teleport finished.\n");
         }
-        _find_machine("tp_tptest", &tp_machine);
-        _start_vm(tp_machine, tp_session);
-
-        zstr_send(listener, "2");
-      } else if (*smsg == '2') {
-        // Source do teleport
-        IConsole *console;
-        ISession_get_Console(session, &console);
-
-        BSTR hostnameu, passu;
-        g_pVBoxFuncs->pfnUtf8ToUtf16("172.17.10.103", &hostnameu);
-        /*g_pVBoxFuncs->pfnUtf8ToUtf16("123", &passu);*/
-        rc = IConsole_Teleport(console, hostnameu, 87678, NULL, 2000, NULL);
-        g_pVBoxFuncs->pfnUtf16Free(hostnameu);
-      }
-      printf("%s\n", smsg);
-      free(smsg);
-    } else {
-      bool terminated = false;
-      while (!terminated) {
+        zstr_free(&smsg);
+      } else {
         zmsg_t *msg = zmsg_recv(pipe);
         if (!msg)
             break; //  Interrupted
@@ -156,13 +211,14 @@ void comm_actor(zsock_t *pipe, void *args) {
 
         // Migration begin
         if (*smsg == '1') {
-          char *ip = smsg + 1;
-          char addr[50];
-          printf("Migration begin: %s\n", ip);
-          sprintf(addr, "tcp://%s:%d", ip, 23432);
-          sender = zsock_new_req(addr);
+          /*char *ip = smsg + 1;*/
+          /*char addr[50];*/
+          /*printf("Migration begin: %s\n", ip);*/
+          /*sprintf(addr, "tcp://%s:%d", ip, 23432);*/
+          sender = zsock_new_req("tcp://172.17.10.80:23432");
           zstr_send(sender, "1");
-          zstr_send(pipe, "ok");
+          zpoller_add(poller, sender);
+          /*zstr_send(pipe, "ok");*/
         }
         printf("%s\n", smsg);
 

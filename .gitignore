@@ -30,3 +30,6 @@ Makefile
 sdk
 CMakeFiles
 CMakeCache.txt
+
+# MacOS
+.DS_Store

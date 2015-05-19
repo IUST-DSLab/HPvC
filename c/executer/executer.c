@@ -169,7 +169,8 @@ void comm_actor(zsock_t *pipe, void *args) {
           TeleportMetadata *md;
           int len = strlen(smd);
           md = teleport_metadata__unpack(NULL, len, smd);
-          printf("Arrived VM metadata: Home %s\n", md->home);
+          printf("VM Metadata arrived.\n");
+          printf("Home:\t%s\n", md->home);
           zstr_free(&smd);
         }
         zstr_free(&smsg);
@@ -209,11 +210,12 @@ void comm_actor(zsock_t *pipe, void *args) {
           void *buf;
           unsigned len;
           md.home = TP_SOURCE;
-          len = teleport_metadata__get_packed_size(&tpm);
+          len = teleport_metadata__get_packed_size(&md);
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);
 
           zstr_send(sender, buf);
+          free(buf);
         }
         zstr_free(&smsg);
       } else {

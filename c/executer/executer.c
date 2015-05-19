@@ -164,6 +164,13 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           IProgress_WaitForCompletion(tp_progress, -1);
           ISession_UnlockMachine(tp_session);
+
+          char *smd = zstr_recv(listener);
+          TeleportMetadata *md;
+          int len = strlen(smd);
+          md = teleport_metadata__unpack(NULL, len, smd);
+          printf("Arrived VM metadata: Home %s\n", md->home);
+          zstr_free(&smd);
         }
         zstr_free(&smsg);
       } else if (sender && (which == sender)) {
@@ -186,7 +193,7 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           IProgress *progress;
           BSTR hostnameu, passu;
-          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_SOURCE, &hostnameu);
+          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_TARGET, &hostnameu);
           g_pVBoxFuncs->pfnUtf8ToUtf16(TP_PASS, &passu);
           rc = IConsole_Teleport(tp_console, hostnameu, TP_PORT, passu, 250, &progress);
           if (FAILED(rc)) {
@@ -197,7 +204,16 @@ void comm_actor(zsock_t *pipe, void *args) {
           g_pVBoxFuncs->pfnUtf16Free(passu);
 
           IProgress_WaitForCompletion(progress, -1);
-          printf("Teleport finished.\n");
+
+          TeleportMetadata md = TELEPORT_METADATA__INIT;
+          void *buf;
+          unsigned len;
+          md.home = TP_SOURCE;
+          len = teleport_metadata__get_packed_size(&tpm);
+          buf = malloc(len);
+          teleport_metadata__pack(&md, buf);
+
+          zstr_send(sender, buf);
         }
         zstr_free(&smsg);
       } else {

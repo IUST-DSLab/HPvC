@@ -2,6 +2,9 @@
 #define MONITOR_H
 
 
-unsigned int REFRESH = 3; // second
+unsigned long PERIOD = 1; // second
+unsigned long COUNT = 5; 
+unsigned long SLEEP_TIME = 1;
+
 
 #endif

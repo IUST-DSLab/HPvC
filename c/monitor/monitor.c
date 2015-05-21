@@ -63,6 +63,7 @@ int main(int argc, char *argv[]) {
   length = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
   data = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
     
+  _setup_performance_metrics();  
   while(TRUE) {
   _setup_query_metrics();
     sleep(SLEEP_TIME*6);
@@ -182,29 +183,29 @@ double _get_metric(const char *metric_name) {
   BSTR *names;
   char *name;
   ULONG data_length, metric_names_length, *_length, *_indices, *_scales;
-
+  printf("###################$$$$$$$################\n");
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_data, &data_length, data);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&names, &metric_names_length, metric_names);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_scales, &metric_names_length, scales);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_indices, &metric_names_length, indices);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_length, &metric_names_length, length);
-
+  printf("%d   %d\n", data_length, metric_names_length);
   for (i=0; i<metric_names_length; i++) {
     g_pVBoxFuncs->pfnUtf16ToUtf8(names[i], &name);
-    if (strcmp(name, metric_name)==0) {
+    if (strcmp(name, metric_name)==0 || TRUE) {
       printf("===========================\n");
       printf("%d: %s\n", i, name);
       printf("data[i] = %d\n", _data[i]);
       printf("indices: %d - length: %d\n", _indices[i], _length[i]);
       printf("%d\n", _scales[i]);
-      for (j=_indices[i]; j<_length[i]; j++) {
+      for (j=_indices[i]; j<_indices[i]+_length[i]; j++) {
         res += _data[j];
       }
-      if (_length[i]-_indices[i] > 0) {
-        res = res / (_length[i]-_indices[i]);
+      if (_length[i] > 0) {
+        res = res / _length[i];
         printf("%f\n", res);
       }
-      break;
+      // break;
     }
   }
 

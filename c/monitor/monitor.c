@@ -64,8 +64,10 @@ int main(int argc, char *argv[]) {
   data = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
     
   _setup_performance_metrics();  
+
   while(TRUE) {
-  _setup_query_metrics();
+    _setup_query_metrics();
+    
     sleep(SLEEP_TIME*6);
 
     printf("Sending metrics ...\n");
@@ -180,19 +182,41 @@ void _setup_query_metrics() {
 double _get_metric(const char *metric_name) {
   double res = 0;
   int *_data, i, j;
-  BSTR *names;
+  BSTR *names ,a;
   char *name;
-  ULONG data_length, metric_names_length, *_length, *_indices, *_scales;
-  printf("###################$$$$$$$################\n");
+  ULONG data_length, metric_names_length, *_length, *_indices, *_scales, objects_length;
+  IUnknown **_objects;
+  void *machine = NULL;
+
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_data, &data_length, data);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&names, &metric_names_length, metric_names);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_scales, &metric_names_length, scales);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_indices, &metric_names_length, indices);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_length, &metric_names_length, length);
-  printf("%d   %d\n", data_length, metric_names_length);
+  g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_objects, &objects_length, objects);
+  // Hint use nsId of object to find which interface  (host->sisupports)
+  for(i=0;i<objects_length;i++) {
+    printf("checking i: %d\n",i);
+    IUnknown_QueryInterface(_objects[i], &IID_IMachine, &machine);
+    if (machine!=NULL) {
+      printf("not null\n");
+      IMachine_get_Name((IMachine *)machine, &a);
+      g_pVBoxFuncs->pfnUtf16ToUtf8(a, &name);
+      printf("machine name: %s\n", name);
+    }
+    else {
+      IUnknown_QueryInterface(_objects[i], &IID_IHost, &machine);
+      if (machine!=NULL) {
+        printf("not null\n");
+        IHost_get_OperatingSystem((IHost *)machine, &a);
+        g_pVBoxFuncs->pfnUtf16ToUtf8(a, &name);
+        printf("host os name: %s\n", name);
+      }
+    }
+  }
   for (i=0; i<metric_names_length; i++) {
     g_pVBoxFuncs->pfnUtf16ToUtf8(names[i], &name);
-    if (strcmp(name, metric_name)==0 || TRUE) {
+    if (strcmp(name, metric_name)==0 && FALSE) {
       printf("===========================\n");
       printf("%d: %s\n", i, name);
       printf("data[i] = %d\n", _data[i]);

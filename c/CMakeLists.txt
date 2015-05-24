@@ -19,6 +19,7 @@ include_directories(${PROJECT_SOURCE_DIR}/utils)
 add_subdirectory(utils)
 add_subdirectory(executer)
 add_subdirectory(organizer)
+add_subdirectory(monitor)
 
 link_directories(
   /usr/local/lib

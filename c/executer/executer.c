@@ -36,17 +36,7 @@ zactor_t *comm;
 
 int main(int argc, char *argv[]) {
   printf("Executer started.\n");
-/*  zsock_t *organizer_sock = zsock_new_rep("tcp://127.0.0.1:98789");*/
-
-  /*Teleport *tpm;*/
-  /*char *smsg = zstr_recv(organizer_sock);*/
-  /*int len = strlen(smsg);*/
-  /*tpm = teleport__unpack(NULL, len, smsg);*/
-  /*printf("%s %s", tpm->vm_name, tpm->target_ip);*/
-  /*[>printf("%s\n", smsg);<]*/
-  /*zstr_free(&smsg);*/
-  /*zsock_destroy(&organizer_sock);*/
-
+  zsock_t *organizer_sock = zsock_new_rep("tcp://127.0.0.1:98789");
 
   ULONG revision = 0;
   HRESULT rc;
@@ -73,10 +63,37 @@ int main(int argc, char *argv[]) {
   metadatas = malloc(5 * sizeof(struct VMMetadata));
   comm = zactor_new(comm_actor, NULL);
 
+  char *smsg;
+  while (1) {
+    smsg = zstr_recv(organizer_sock);
+    if (smsg == NULL) {
+      break;
+    }
+
+    OEMsg *oem;
+    /*Teleport *tpm;*/
+    int len = strlen(smsg);
+    if (!len) {
+      log_err("Message rcvd from organizer empty.\n");
+    }
+
+    oem = oemsg__unpack(NULL, len, smsg);
+    if (oem->type == OEMSG__TYPE__TELEPORT) {
+      /*Teleport *tpm = oem->teleport;*/
+      /*printf("[Teleport] VMName: %s\tTarget: %s\n", tpm->vm_name, tpm->target_ip);*/
+      printf("Teleport msg recvd.\n");
+      zstr_send(organizer_sock, "ok");
+      zstr_send(comm, smsg);
+    }
+
+    zstr_free(&smsg);
+  }
+
+  zsock_destroy(&organizer_sock);
+
   /*sleep(2);*/
   /*zstr_send(comm, "1");*/
 
-  sleep(60);
   _exit(0);
 }
 
@@ -248,18 +265,23 @@ void comm_actor(zsock_t *pipe, void *args) {
         if (streq(smsg, "$TERM"))
             terminated = true;
 
-        // Migration begin
-        if (*smsg == '1') {
-          /*char *ip = smsg + 1;*/
-          /*char addr[50];*/
-          /*printf("Migration begin: %s\n", ip);*/
-          /*sprintf(addr, "tcp://%s:%d", ip, 23432);*/
-          sender = zsock_new_req("tcp://172.17.10.80:23432");
+        OEMsg *oem;
+        int len = strlen(smsg);
+        if (!len) {
+          log_err("Message rcvd from executer empty.\n");
+        }
+
+        oem = oemsg__unpack(NULL, len, smsg);
+        if (oem->type == OEMSG__TYPE__TELEPORT) {
+          printf("Teleport.\n", smsg);
+          char addr[50] = {0};
+          sprintf(addr, "tcp://%s:%d", oem->teleport->target_ip, 23432);
+          printf("%s\n", addr);
+          sender = zsock_new_req(addr);
           zstr_send(sender, "1");
           zpoller_add(poller, sender);
           /*zstr_send(pipe, "ok");*/
         }
-        printf("%s\n", smsg);
 
         free(smsg);
         zmsg_destroy(&msg);

@@ -9,16 +9,18 @@
 #include "executer.h"
 #include "utils.h"
 #include "oe.pb-c.h"
+#include "ee.pb-c.h"
 
 #define TP_PASS "123"
 #define TP_PORT 23632
 #define TP_SOURCE "172.17.10.80"
-#define TP_TARGET "172.17.8.79"
+#define TP_TARGET "172.17.8.165"
 
 
 
 struct VMMetadata {
   char *home;
+  int n_history;
   char **history;
 };
 
@@ -26,6 +28,9 @@ IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
 ISession *session = NULL;
 ISession *tp_session = NULL;
+
+struct VMMetadata *metadatas;
+int metadatas_len;
 
 zactor_t *comm;
 
@@ -64,6 +69,8 @@ int main(int argc, char *argv[]) {
     err_exit("Could not get Session reference");
   }
 
+  metadatas_len = 0;
+  metadatas = malloc(5 * sizeof(struct VMMetadata));
   comm = zactor_new(comm_actor, NULL);
 
   /*sleep(2);*/
@@ -168,10 +175,21 @@ void comm_actor(zsock_t *pipe, void *args) {
           char *smd = zstr_recv(listener);
           TeleportMetadata *md;
           int len = strlen(smd);
+          printf(smd);
           md = teleport_metadata__unpack(NULL, len, smd);
           printf("VM Metadata arrived.\n");
-          printf("Home:\t%s\n", md->home);
+          printf("Home: %s\t", md->home);
           zstr_free(&smd);
+
+          struct VMMetadata vm_md = {home: md->home, n_history: md->n_history + 1, history: md->history};
+          vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
+          vm_md.history[vm_md.n_history - 1] = TP_TARGET;
+
+          printf("VM MD object home: %s\thistory_len: %d\n", vm_md.home, vm_md.n_history);
+          int i = 0;
+          for (i = 0; i <= md->n_history; i++) {
+            printf("%s\n", md->history[i]);
+          }
         }
         zstr_free(&smsg);
       } else if (sender && (which == sender)) {
@@ -210,6 +228,9 @@ void comm_actor(zsock_t *pipe, void *args) {
           void *buf;
           unsigned len;
           md.home = TP_SOURCE;
+          md.n_history = 1;
+          md.history = malloc(md.n_history * sizeof(char*));
+          md.history[0] = "172.17.8.1";
           len = teleport_metadata__get_packed_size(&md);
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);

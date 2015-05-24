@@ -1,0 +1,4 @@
+message TeleportMetadata {
+  required string home = 1;
+  repeated string history = 2;
+}

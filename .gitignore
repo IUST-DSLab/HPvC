@@ -25,6 +25,8 @@ a.out
 vhpc
 /c/executer/executer
 /c/organizer/organizer
+/c/monitor/monitor
+/c/monitor/server
 lib
 Makefile
 sdk

@@ -9,16 +9,18 @@
 #include "executer.h"
 #include "utils.h"
 #include "oe.pb-c.h"
+#include "ee.pb-c.h"
 
 #define TP_PASS "123"
 #define TP_PORT 23632
 #define TP_SOURCE "172.17.10.80"
-#define TP_TARGET "172.17.8.79"
+#define TP_TARGET "172.17.8.165"
 
 
 
 struct VMMetadata {
   char *home;
+  int history_len;
   char **history;
 };
 
@@ -26,6 +28,9 @@ IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
 ISession *session = NULL;
 ISession *tp_session = NULL;
+
+struct VMMetadata *metadatas;
+int metadatas_len;
 
 zactor_t *comm;
 
@@ -64,6 +69,8 @@ int main(int argc, char *argv[]) {
     err_exit("Could not get Session reference");
   }
 
+  metadatas_len = 0;
+  metadatas = malloc(5 * sizeof(struct VMMetadata));
   comm = zactor_new(comm_actor, NULL);
 
   /*sleep(2);*/
@@ -170,8 +177,18 @@ void comm_actor(zsock_t *pipe, void *args) {
           int len = strlen(smd);
           md = teleport_metadata__unpack(NULL, len, smd);
           printf("VM Metadata arrived.\n");
-          printf("Home:\t%s\n", md->home);
+          printf("Home: %s\tHISTORY_LEN: %d\n", md->home, md->history_len);
           zstr_free(&smd);
+
+          struct VMMetadata vm_md = {home: md->home, history_len: md->history_len + 1, history: md->history};
+          vm_md.history = realloc(vm_md.history, (vm_md.history_len) * sizeof(char*));
+          vm_md.history[vm_md.history_len - 1] = TP_TARGET;
+
+          printf("VM MD object home: %s\thistory_len: %d\n", md->home, md->history_len);
+          int i = 0;
+          for (i = 0; i <= md->history_len; i++) {
+            printf("%s\n", md->history[i]);
+          }
         }
         zstr_free(&smsg);
       } else if (sender && (which == sender)) {
@@ -210,6 +227,7 @@ void comm_actor(zsock_t *pipe, void *args) {
           void *buf;
           unsigned len;
           md.home = TP_SOURCE;
+          md.history_len = 0;
           len = teleport_metadata__get_packed_size(&md);
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);

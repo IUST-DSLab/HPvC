@@ -2,7 +2,3 @@ message Teleport {
   required string vm_name = 1;
   required string target_ip = 2;
 }
-
-message TeleportMetadata {
-  required string home = 1;
-}

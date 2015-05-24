@@ -1,5 +1,4 @@
 message TeleportMetadata {
   required string home = 1;
-  required int32 history_len = 2;
-  repeated string history = 3;
+  repeated string history = 2;
 }

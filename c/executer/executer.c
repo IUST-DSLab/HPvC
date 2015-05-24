@@ -20,7 +20,7 @@
 
 struct VMMetadata {
   char *home;
-  int history_len;
+  int n_history;
   char **history;
 };
 
@@ -175,18 +175,19 @@ void comm_actor(zsock_t *pipe, void *args) {
           char *smd = zstr_recv(listener);
           TeleportMetadata *md;
           int len = strlen(smd);
+          printf(smd);
           md = teleport_metadata__unpack(NULL, len, smd);
           printf("VM Metadata arrived.\n");
-          printf("Home: %s\tHISTORY_LEN: %d\n", md->home, md->history_len);
+          printf("Home: %s\t", md->home);
           zstr_free(&smd);
 
-          struct VMMetadata vm_md = {home: md->home, history_len: md->history_len + 1, history: md->history};
-          vm_md.history = realloc(vm_md.history, (vm_md.history_len) * sizeof(char*));
-          vm_md.history[vm_md.history_len - 1] = TP_TARGET;
+          struct VMMetadata vm_md = {home: md->home, n_history: md->n_history + 1, history: md->history};
+          vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
+          vm_md.history[vm_md.n_history - 1] = TP_TARGET;
 
-          printf("VM MD object home: %s\thistory_len: %d\n", md->home, md->history_len);
+          printf("VM MD object home: %s\thistory_len: %d\n", vm_md.home, vm_md.n_history);
           int i = 0;
-          for (i = 0; i <= md->history_len; i++) {
+          for (i = 0; i <= md->n_history; i++) {
             printf("%s\n", md->history[i]);
           }
         }
@@ -227,7 +228,9 @@ void comm_actor(zsock_t *pipe, void *args) {
           void *buf;
           unsigned len;
           md.home = TP_SOURCE;
-          md.history_len = 0;
+          md.n_history = 1;
+          md.history = malloc(md.n_history * sizeof(char*));
+          md.history[0] = "172.17.8.1";
           len = teleport_metadata__get_packed_size(&md);
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);

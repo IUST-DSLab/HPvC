@@ -25,7 +25,7 @@ void log_err(char *err);
 void _setup_performance_metrics();
 void _setup_query_metrics();
 void _send_host_metrics();
-double _get_metric(const char *metric_name);
+HostMetric _get_metrics();
 
 
 int main(int argc, char *argv[]) {
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
 
 void _send_host_metrics() {
 
-  HostMetric host_metric = HOST_METRIC__INIT;
+  HostMetric metric;
   unsigned char *buf;
   unsigned int len;
   HRESULT rc;
@@ -104,21 +104,21 @@ void _send_host_metrics() {
   signal(SIGINT, exit);
   zsocket_connect(request, "tcp://localhost:5050");
 
-  host_metric.cpu = _get_metric("CPU/Load/User");
+  metric = _get_metrics(); 
 
-  // len = host_metric__get_packed_size(&host_metric);
-  // buf = malloc(len);
+  len = host_metric__get_packed_size(&metric);
+  buf = malloc(len);
 
-  // host_metric__pack(&host_metric, buf);
+  host_metric__pack(&metric, buf);
   
-  // if(zmsg_addmem(msg, buf, len) != 0){
-    // printf("error\n");
-  // }
+  if(zmsg_addmem(msg, buf, len) != 0){
+    printf("error\n");
+  }
 
 
-  // zmsg_send (&msg, request);
+  zmsg_send (&msg, request);
 
-  // free(buf);
+  free(buf);
   zmsg_destroy(&msg);
   zsocket_destroy(context, request);
 }
@@ -179,58 +179,73 @@ void _setup_query_metrics() {
 
 }
 
-double _get_metric(const char *metric_name) {
+HostMetric _get_metrics() {
   double res = 0;
   int *_data, i, j;
-  BSTR *names ,a;
-  char *name;
-  ULONG data_length, metric_names_length, *_length, *_indices, *_scales, objects_length;
+  BSTR *names, ip;
+  char *name, *cip;
+  ULONG data_length, metric_names_length, *_length, *_indices, *_scales, network_interfaces_length;
   IUnknown **_objects;
   void *machine = NULL;
+  HostMetric metrics = HOST_METRIC__INIT; 
+  IHostNetworkInterface **_network_interfaces = NULL;
+  SAFEARRAY *network_interfaces = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
 
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_data, &data_length, data);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&names, &metric_names_length, metric_names);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_scales, &metric_names_length, scales);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_indices, &metric_names_length, indices);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_length, &metric_names_length, length);
-  g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_objects, &objects_length, objects);
-  // Hint use nsId of object to find which interface  (host->sisupports)
-  for(i=0;i<objects_length;i++) {
-    printf("checking i: %d\n",i);
+  g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_objects, &metric_names_length, objects);
+  for (i=0, res=0; i<metric_names_length; i++) {
+    g_pVBoxFuncs->pfnUtf16ToUtf8(names[i], &name);
+    
+    printf("===========================\n");
+    printf("%d: %s\n", i, name);
+    printf("data[i] = %d\n", _data[i]);
+    printf("indices: %d - length: %d\n", _indices[i], _length[i]);
+    printf("%d\n", _scales[i]);
+    for (j=_indices[i]; j<_indices[i]+_length[i]; j++) {
+      res += _data[j];
+    }
+    if (_length[i] > 0) {
+      res = res / _length[i];
+    }
+
     IUnknown_QueryInterface(_objects[i], &IID_IMachine, &machine);
-    if (machine!=NULL) {
-      printf("not null\n");
-      IMachine_get_Name((IMachine *)machine, &a);
-      g_pVBoxFuncs->pfnUtf16ToUtf8(a, &name);
-      printf("machine name: %s\n", name);
+    if (machine != NULL) {
+      // IMachine_get_Name((IMachine *)machine, &a);
+      // printf("machine name: %s\n", name);
+      if (strcmp(name, "Guest/RAM/Usage/Total:avg") == 0) {
+
+      }
+      else if (strcmp(name, "Guest/CPU/Load/User:avg") == 0) {
+        
+      }
     }
     else {
       IUnknown_QueryInterface(_objects[i], &IID_IHost, &machine);
-      if (machine!=NULL) {
-        printf("not null\n");
-        IHost_get_OperatingSystem((IHost *)machine, &a);
-        g_pVBoxFuncs->pfnUtf16ToUtf8(a, &name);
-        printf("host os name: %s\n", name);
+      if (machine != NULL) {
+        IHost_get_NetworkInterfaces((IHost *) machine, ComSafeArrayAsOutIfaceParam(network_interfaces, IHostNetworkInterface *));
+        g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_network_interfaces, &network_interfaces_length, network_interfaces);
+        if (network_interfaces_length > 0) {
+          IHostNetworkInterface_get_IPAddress(_network_interfaces[0], &ip);
+          g_pVBoxFuncs->pfnUtf16ToUtf8(ip, &cip);
+          metrics.ip = cip;
+          printf("ip: %s\n", metrics.ip);
+        }
+        // g_pVBoxFuncs->pfnUtf16ToUtf8(a, &name);
+        // printf("host os name: %s\n", name);
+        if (strcmp(name, "RAM/Usage/Total:avg") == 0) {
+          metrics.ram_usage_total_average = res;
+        }
+        else if (strcmp(name, "CPU/Load/User:avg") == 0) {
+          metrics.cpu_load_usage = res;
+        }
       }
     }
-  }
-  for (i=0; i<metric_names_length; i++) {
-    g_pVBoxFuncs->pfnUtf16ToUtf8(names[i], &name);
-    if (strcmp(name, metric_name)==0 && FALSE) {
-      printf("===========================\n");
-      printf("%d: %s\n", i, name);
-      printf("data[i] = %d\n", _data[i]);
-      printf("indices: %d - length: %d\n", _indices[i], _length[i]);
-      printf("%d\n", _scales[i]);
-      for (j=_indices[i]; j<_indices[i]+_length[i]; j++) {
-        res += _data[j];
-      }
-      if (_length[i] > 0) {
-        res = res / _length[i];
-        printf("%f\n", res);
-      }
-      // break;
-    }
+    
+    
   }
 
   // for (i=0; i<metric_names_length; i++) {
@@ -245,7 +260,7 @@ double _get_metric(const char *metric_name) {
   free(_indices);
   free(_scales);
   
-  return res;
+  return metrics;
 }
 
 void err_exit(char *err) {

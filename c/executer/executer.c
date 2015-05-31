@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
+#include <sys/socket.h>
 
 #include <czmq.h>
 #include "VBoxCAPIGlue.h"
@@ -140,6 +141,21 @@ void comm_actor(zsock_t *pipe, void *args) {
         printf("%s\n", smsg);
         // Target teleport init
         if (*smsg == '1') {
+
+          /*char *ep = zsock_endpoint(pipe);*/
+          struct sockaddr_in addr;
+          socklen_t ip_len = sizeof(addr);
+          /*char *ipstr = malloc(20 * sizeof(char));*/
+          char ipstr[30];
+          SOCKET fd = zsock_fd(pipe);
+          getpeername(fd, (struct sockaddr*)&addr, &ip_len);
+          /*struct sockaddr_in *s = (struct sockaddr_in *)&addr;*/
+          inet_ntop(AF_INET, &addr.sin_addr, ipstr, sizeof ipstr);
+          /*strcpy(ipstr, inet_ntoa(addr.sin_addr));*/
+          printf("Endpoint: %s\n", ipstr);
+          /*free(ipstr);*/
+          return;
+
           IMachine *tp_machine;
           _find_machine("fdr", &tp_machine);
           rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
@@ -201,6 +217,10 @@ void comm_actor(zsock_t *pipe, void *args) {
           struct VMMetadata vm_md = {home: md->home, n_history: md->n_history + 1, history: md->history};
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
           vm_md.history[vm_md.n_history - 1] = TP_TARGET;
+          if (metadatas_len % 5 == 0) {
+            metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
+          }
+          metadatas[len++] = vm_md;
 
           printf("VM MD object home: %s\thistory_len: %d\n", vm_md.home, vm_md.n_history);
           int i = 0;

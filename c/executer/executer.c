@@ -139,6 +139,8 @@ void comm_actor(zsock_t *pipe, void *args) {
   zpoller_t *poller = zpoller_new(pipe, listener, NULL);
   if (!poller) err_exit("Poller was not created.\n");
 
+  char *target_ip = malloc(20 * sizeof(char));
+
   bool terminated = false;
   while (!terminated) {
     zsock_t *which = zpoller_wait(poller, -1);
@@ -150,9 +152,8 @@ void comm_actor(zsock_t *pipe, void *args) {
         if (*smsg == '1') {
           zsock_signal(listener, 0);
           char *remote_ip = zstr_recv(listener);
-          printf("Endpoint: %s\n", remote_ip);
+          printf("Remote Addr: %s\n", remote_ip);
           zstr_free(&remote_ip);
-          return;
 
           IMachine *tp_machine;
           _find_machine("fdr", &tp_machine);
@@ -164,7 +165,7 @@ void comm_actor(zsock_t *pipe, void *args) {
           ISession_get_Machine(tp_session, &tp_machine);
           IMachine_SetTeleporterEnabled(tp_machine, true);
           BSTR hostnameu, passu;
-          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_TARGET, &hostnameu);
+          g_pVBoxFuncs->pfnUtf8ToUtf16(host_ip, &hostnameu);
           g_pVBoxFuncs->pfnUtf8ToUtf16(TP_PASS, &passu);
           IMachine_SetTeleporterAddress(tp_machine, hostnameu);
           IMachine_SetTeleporterPassword(tp_machine, passu);
@@ -214,7 +215,7 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           struct VMMetadata vm_md = {home: md->home, n_history: md->n_history + 1, history: md->history};
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
-          vm_md.history[vm_md.n_history - 1] = TP_TARGET;
+          vm_md.history[vm_md.n_history - 1] = host_ip;
           if (metadatas_len % 5 == 0) {
             metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
           }
@@ -247,7 +248,7 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           IProgress *progress;
           BSTR hostnameu, passu;
-          g_pVBoxFuncs->pfnUtf8ToUtf16(TP_TARGET, &hostnameu);
+          g_pVBoxFuncs->pfnUtf8ToUtf16(target_ip, &hostnameu);
           g_pVBoxFuncs->pfnUtf8ToUtf16(TP_PASS, &passu);
           rc = IConsole_Teleport(tp_console, hostnameu, TP_PORT, passu, 250, &progress);
           if (FAILED(rc)) {
@@ -262,10 +263,10 @@ void comm_actor(zsock_t *pipe, void *args) {
           TeleportMetadata md = TELEPORT_METADATA__INIT;
           void *buf;
           unsigned len;
-          md.home = TP_SOURCE;
+          md.home = host_ip;
           md.n_history = 1;
           md.history = malloc(md.n_history * sizeof(char*));
-          md.history[0] = "172.17.8.1";
+          md.history[0] = host_ip;
           len = teleport_metadata__get_packed_size(&md);
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);
@@ -294,6 +295,7 @@ void comm_actor(zsock_t *pipe, void *args) {
           printf("Teleport.\n", smsg);
           char addr[50] = {0};
           sprintf(addr, "tcp://%s:%d", oem->teleport->target_ip, 23432);
+          target_ip = oem->teleport->target_ip;
           printf("%s\n", addr);
           sender = zsock_new_req(addr);
           zstr_send(sender, "1");
@@ -308,6 +310,8 @@ void comm_actor(zsock_t *pipe, void *args) {
       }
     }
   }
+
+  free(target_ip);
 
   zpoller_destroy(&poller);
   zsock_destroy(&listener);

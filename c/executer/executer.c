@@ -33,6 +33,8 @@ ISession *tp_session = NULL;
 struct VMMetadata *metadatas;
 int metadatas_len;
 
+char *host_ip;
+
 zactor_t *comm;
 
 int main(int argc, char *argv[]) {
@@ -62,6 +64,10 @@ int main(int argc, char *argv[]) {
 
   metadatas_len = 0;
   metadatas = malloc(5 * sizeof(struct VMMetadata));
+
+  host_ip = malloc(20 * sizeof(char));
+  host_ip = get_host_ip(host_ip);
+
   comm = zactor_new(comm_actor, NULL);
 
   char *smsg;
@@ -91,6 +97,7 @@ int main(int argc, char *argv[]) {
   }
 
   zsock_destroy(&organizer_sock);
+  free(host_ip);
 
   /*sleep(2);*/
   /*zstr_send(comm, "1");*/
@@ -138,22 +145,13 @@ void comm_actor(zsock_t *pipe, void *args) {
     if (!zpoller_terminated(poller)) {
       if (which == listener) {
         char *smsg = zstr_recv(listener);
-        printf("%s\n", smsg);
+        printf("SMSG %s\n", smsg);
         // Target teleport init
         if (*smsg == '1') {
-
-          /*char *ep = zsock_endpoint(pipe);*/
-          struct sockaddr_in addr;
-          socklen_t ip_len = sizeof(addr);
-          /*char *ipstr = malloc(20 * sizeof(char));*/
-          char ipstr[30];
-          SOCKET fd = zsock_fd(pipe);
-          getpeername(fd, (struct sockaddr*)&addr, &ip_len);
-          /*struct sockaddr_in *s = (struct sockaddr_in *)&addr;*/
-          inet_ntop(AF_INET, &addr.sin_addr, ipstr, sizeof ipstr);
-          /*strcpy(ipstr, inet_ntoa(addr.sin_addr));*/
-          printf("Endpoint: %s\n", ipstr);
-          /*free(ipstr);*/
+          zsock_signal(listener, 0);
+          char *remote_ip = zstr_recv(listener);
+          printf("Endpoint: %s\n", remote_ip);
+          zstr_free(&remote_ip);
           return;
 
           IMachine *tp_machine;
@@ -299,6 +297,8 @@ void comm_actor(zsock_t *pipe, void *args) {
           printf("%s\n", addr);
           sender = zsock_new_req(addr);
           zstr_send(sender, "1");
+          zsock_wait(sender);
+          zstr_send(sender, host_ip);
           zpoller_add(poller, sender);
           /*zstr_send(pipe, "ok");*/
         }
@@ -329,6 +329,38 @@ void teleport(char *name, char *target) {
   printf("%s\n", st);
   free(st);
 }
+
+char *get_host_ip(char *host) {
+  struct ifaddrs *ifaddr, *ifa;
+  int family, s;
+
+  if (getifaddrs(&ifaddr) == -1) 
+  {
+    perror("getifaddrs");
+    exit(EXIT_FAILURE);
+  }
+
+  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) 
+  {
+    if (ifa->ifa_addr == NULL)
+      continue;
+
+    s=getnameinfo(ifa->ifa_addr,sizeof(struct sockaddr_in),host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+
+    if((strcmp(ifa->ifa_name,"eth0")==0 || strcmp(ifa->ifa_name,"p4p1")==0)&&(ifa->ifa_addr->sa_family==AF_INET))
+    {
+      if (s != 0)
+      {
+          printf("getnameinfo() failed: %s\n", gai_strerror(s));
+          exit(EXIT_FAILURE);
+      }
+      return host;
+    }
+  }
+
+  freeifaddrs(ifaddr);
+}
+
 void log_err(char *err) {
   fprintf(stderr, err);
 }

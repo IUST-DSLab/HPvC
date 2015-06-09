@@ -6,6 +6,12 @@
 #include <signal.h>
 #include "monitor.pb-c.h"
 
+typedef struct Machine
+{
+  MachineMetric metrics;
+  struct Machine *next;
+} Machine;
+
 IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
 IPerformanceCollector *pc = NULL;
@@ -25,7 +31,9 @@ void log_err(char *err);
 void _setup_performance_metrics();
 void _setup_query_metrics();
 void _send_host_metrics();
-HostMetric _get_metrics();
+void _get_metrics(HostMetric *metrics);
+Machine *find_machine(Machine *machines, char *uuid);
+Machine *last_machine(Machine *machines);
 
 
 int main(int argc, char *argv[]) {
@@ -93,7 +101,7 @@ int main(int argc, char *argv[]) {
 
 void _send_host_metrics() {
 
-  HostMetric metric;
+  HostMetric metric = HOST_METRIC__INIT;
   unsigned char *buf;
   unsigned int len;
   HRESULT rc;
@@ -104,11 +112,10 @@ void _send_host_metrics() {
   signal(SIGINT, exit);
   zsocket_connect(request, "tcp://localhost:5050");
 
-  metric = _get_metrics(); 
-
+  _get_metrics(&metric); 
   len = host_metric__get_packed_size(&metric);
   buf = malloc(len);
-
+  printf("send start malloced\n");
   host_metric__pack(&metric, buf);
   
   if(zmsg_addmem(msg, buf, len) != 0){
@@ -179,17 +186,18 @@ void _setup_query_metrics() {
 
 }
 
-HostMetric _get_metrics() {
+void _get_metrics(HostMetric *metrics) {
   double res = 0;
   int *_data, i, j;
-  BSTR *names, ip;
-  char *name, *cip;
-  ULONG data_length, metric_names_length, *_length, *_indices, *_scales, network_interfaces_length;
+  BSTR *names, ip, uuid;
+  char *name, *cip, *cuuid;
+  ULONG data_length, metric_names_length, *_length, *_indices, *_scales, network_interfaces_length, machines_length = 0;
   IUnknown **_objects;
   void *machine = NULL;
-  HostMetric metrics = HOST_METRIC__INIT; 
+  // HostMetric metrics = HOST_METRIC__INIT; 
   IHostNetworkInterface **_network_interfaces = NULL;
   SAFEARRAY *network_interfaces = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
+  Machine *machines = NULL, *found_machine = NULL;
 
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_data, &data_length, data);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&names, &metric_names_length, metric_names);
@@ -212,18 +220,48 @@ HostMetric _get_metrics() {
       res = res / _length[i];
     }
 
+    // If Guest 
     IUnknown_QueryInterface(_objects[i], &IID_IMachine, &machine);
     if (machine != NULL) {
-      // IMachine_get_Name((IMachine *)machine, &a);
-      // printf("machine name: %s\n", name);
+      if (machines == NULL) {
+        machines_length++;
+        machines = (Machine *) malloc(sizeof(Machine)); 
+        machines->next = NULL;
+        machine_metric__init(&machines->metrics);
+        IMachine_get_Id((IMachine *) machine, &uuid);
+        g_pVBoxFuncs->pfnUtf16ToUtf8(uuid, &cuuid);
+        machines->metrics.uuid = malloc(strlen(cuuid));
+        strcpy(machines->metrics.uuid, cuuid);
+        printf("%s\n", machines->metrics.uuid);
+        found_machine = machines;
+      }
+      else {
+        IMachine_get_Id((IMachine *) machine, &uuid);
+        g_pVBoxFuncs->pfnUtf16ToUtf8(uuid, &cuuid);
+        found_machine = find_machine(machines, cuuid);
+        if (found_machine == NULL) {
+          machines_length++;
+          found_machine = last_machine(machines);
+          found_machine->next = (Machine *) malloc(sizeof(Machine));
+          machine_metric__init(&machines->metrics);
+          found_machine = found_machine->next;
+        }
+      }
       if (strcmp(name, "Guest/RAM/Usage/Total:avg") == 0) {
-
+        found_machine->metrics.ram_usage_total_average = res;
       }
       else if (strcmp(name, "Guest/CPU/Load/User:avg") == 0) {
-        
+        found_machine->metrics.cpu_load_usage = res;
       }
+      found_machine->metrics.ip = "127.0.0.1";
+      found_machine->metrics.cpu = 2;
+      found_machine->metrics.cpu_load_usage = 12;
+      found_machine->metrics.ram = 12;
+      found_machine->metrics.ram_usage_total_average = 12;
     }
+    // If Host
     else {
+      // double check if host
       IUnknown_QueryInterface(_objects[i], &IID_IHost, &machine);
       if (machine != NULL) {
         IHost_get_NetworkInterfaces((IHost *) machine, ComSafeArrayAsOutIfaceParam(network_interfaces, IHostNetworkInterface *));
@@ -231,23 +269,39 @@ HostMetric _get_metrics() {
         if (network_interfaces_length > 0) {
           IHostNetworkInterface_get_IPAddress(_network_interfaces[0], &ip);
           g_pVBoxFuncs->pfnUtf16ToUtf8(ip, &cip);
-          metrics.ip = cip;
-          printf("ip: %s\n", metrics.ip);
+          metrics->ip = cip;
+          printf("ip: %s\n", metrics->ip);
         }
         // g_pVBoxFuncs->pfnUtf16ToUtf8(a, &name);
         // printf("host os name: %s\n", name);
         if (strcmp(name, "RAM/Usage/Total:avg") == 0) {
-          metrics.ram_usage_total_average = res;
+          metrics->ram_usage_total_average = res;
         }
         else if (strcmp(name, "CPU/Load/User:avg") == 0) {
-          metrics.cpu_load_usage = res;
+          metrics->cpu_load_usage = res;
         }
+        IHost_get_MemorySize((IHost *) machine, &metrics->ram);
+        metrics->core_per_cpu = 1;
+        metrics->cpu = 1;
       }
     }
-    
-    
   }
 
+  printf("dddzzz\n");
+
+  metrics->n_machines = machines_length;
+  metrics->machines = (MachineMetric **) malloc(sizeof(MachineMetric *) * machines_length);
+  printf("%d\n", metrics->n_machines);
+  for (i=0; i<metrics->n_machines; i++) {
+    metrics->machines[i] = &machines->metrics;
+    machines = machines->next;
+  }
+  printf("HEEERR\n");
+  int len = host_metric__get_packed_size(metrics);
+  printf("%d len", len);
+  char* buf = malloc(len);
+  host_metric__pack(metrics, buf);
+  printf("%s\n", buf);
   // for (i=0; i<metric_names_length; i++) {
   //   free(names[i]);
   // }
@@ -259,8 +313,27 @@ HostMetric _get_metrics() {
   free(_length);
   free(_indices);
   free(_scales);
-  
-  return metrics;
+}
+
+Machine *find_machine(Machine *machines, char *uuid) {
+  if (machines == NULL) {
+    return NULL;
+  }
+
+  while(machines != NULL) {
+    if (strcmp(machines->metrics.uuid, uuid) == 0) {
+      return machines;
+    }
+    machines = machines->next;
+  }
+  return NULL;
+}
+
+Machine *last_machine(Machine *machines) {
+  while (machines->next != NULL) {
+    machines = machines->next;
+  }
+  return machines;
 }
 
 void err_exit(char *err) {

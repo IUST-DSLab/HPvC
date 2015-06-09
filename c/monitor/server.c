@@ -83,10 +83,10 @@ int set_host_utility(zloop_t* loop, zmq_pollitem_t* item, void* socket) {
     }
   }
   printf("Host %s updated!\n", host->metric->ip);
-  free(host);
-  free(host_tmp);
-  free(packed_msg);
-  zmsg_destroy(&msg);
+  // free(host);
+  // free(host_tmp);
+  // free(packed_msg);
+  // zmsg_destroy(&msg);
   return 0;
 }
 

@@ -1,0 +1,16 @@
+<?xml version='1.0'?>
+<!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd"
+<platform version="3">
+	<process host="c-0" function="create_tasks">
+		<argument value="1000"/>
+		<argument value="4194304"/>
+		<argument value="20"/>
+		<argument value="0.1"/>
+	</process>
+	<!--***********************************************************************************************-->
+	<process host="c-4" function="controller">
+		<argument value="1000000"/>
+	</process>
+	<!--***********************************************************************************************-->
+</platform>
+

@@ -7,6 +7,7 @@
 // Private
 void _find_machine(char *vmname, IMachine **machine);
 void _start_vm(IMachine *machine, ISession *sess);
+char *get_host_ip(char *ip);
 void comm_actor(zsock_t *pipe, void *args);
 
 void log_err(char *err);

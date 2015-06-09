@@ -202,7 +202,7 @@ static int process_task(int argc, char* argv[])
 	unsigned int c = atoi(argv[3]);
 	unsigned int rand_task = atoi(argv[4]);
 	unsigned int home_vm = atoi(argv[5]);
-	unsigned int targte_mailbox = atoi(argv[6]);
+	unsigned int target_mailbox = atoi(argv[6]);
 	double cpu_need;
 	double mem_need;
 	double msg_size;
@@ -230,9 +230,27 @@ static int process_task(int argc, char* argv[])
 																			// 16e6 is bandwidth in byte/sec
 	}
 
+
+	char exec_name[20];
+	char msg_name[20];
+	sprintf(exec_name, "task_%d", MSG_process_self_PID());
+	sprintf(msg_name, "msg_%d", MSG_process_self_PID());
+	char target_mailbox_name[40];
+	sprintf(target_mailbox_name, "mailbox_%d", target_mailbox);
 	double real_start_time = MSG_get_clock();
 
 	// Do the task
+
+	uint8_t* data = xbt_new0(uint8_t, (uint64_t)mem_need);
+
+	msg_task_t executive_task = MSG_task_create(exec_name, cpu_need, 0, data);
+	msg_task_t comm_task = MSG_task_create(msg_name, 0, msg_size, "");
+
+	msg_error_t error = MSG_task_execute(executive_task);
+	if (error != MSG_OK)
+		XBT_INFO("Failed to execute task! %s\n", exec_name);
+
+	MSG_task_dsend(comm_task, target_mailbox_name, NULL);
 
 	double real_finish_time = MSG_get_clock();
 
@@ -241,6 +259,7 @@ static int process_task(int argc, char* argv[])
 	// Compute slow down of the task by dividing task_time by (real_finish_time - real_start_time)
 	
 
+	XBT_INFO("PID_%d is going to be off\n", MSG_process_self_PID());
 	return 0;
 }
 

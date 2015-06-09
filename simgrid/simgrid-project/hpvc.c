@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "msg/msg.h"            /* core library */
 #include "xbt/sysdep.h"         /* calloc */
@@ -187,9 +188,47 @@ int process_job(int argc, char* argv[])
 
 // Create process and a task with the passing parameters of CPU, Memory and communication.
 // Communication will be done with another VM that is provided by create_task process.
-int process_task(int argc, char* argv[])
+static int process_task(int argc, char* argv[])
 {
 	// Create the task with respect to parameters
+	if (argc < 7)
+	{
+		XBT_INFO("Each process must be passed 6 arguments\n");
+		return -1;
+	}
+
+	unsigned int r = atoi(argv[1]);
+	unsigned int m = atoi(argv[2]);
+	unsigned int c = atoi(argv[3]);
+	unsigned int rand_task = atoi(argv[4]);
+	unsigned int home_vm = atoi(argv[5]);
+	unsigned int targte_mailbox = atoi(argv[6]);
+	double cpu_need;
+	double mem_need;
+	double msg_size;
+
+	if (((double)(rand_task) / RAND_MAX) < 0.95)
+	{
+		r = r == 0 ? 10 : r;
+		cpu_need = (RAND_MAX / (double)(r)) * 1e9;		// Based on description of opportunity cost paper
+																// MAX_FLOPS = 1e9
+		m = m == 0 ? 10 : m;
+		mem_need = (RAND_MAX / (double)(m)) * 1e9;		// MAX_MEM 0f each vm is 1e9
+
+		msg_size = ((double)(c) / RAND_MAX) * cpu_need * 16e6;		// The msg_size based on cpu_need
+																			// 16e6 is bandwidth in byte/sec
+	}
+	else
+	{
+		r = r == 0 ? 10 : r;
+		cpu_need = (RAND_MAX * 10 / (double)(r)) * 1e9;		// Based on description of opportunity cost paper
+																// MAX_FLOPS = 1e9
+		m = m == 0 ? 10 : m;
+		mem_need = (RAND_MAX / (double)(m)) * 1e9;		// MAX_MEM 0f each vm is 1e9
+
+		msg_size = ((double)(c) / RAND_MAX) * cpu_need * 16e5;		// The msg_size based on cpu_need
+																			// 16e6 is bandwidth in byte/sec
+	}
 
 	double real_start_time = MSG_get_clock();
 
@@ -205,33 +244,124 @@ int process_task(int argc, char* argv[])
 	return 0;
 }
 
+// Creates a processes associated with a mailbox to receive the messages from other processes
+// It will not terminated. It only waits to receive some messages and then check to receive again.
+// It will be killed by another process of vm or vm itself on destroy phase.
+static int process_mailbox(int argc, char* argv[])
+{
+	if (argc < 2)
+	{
+		XBT_INFO("mailbox: must pass vm number to create malbox\n");
+		return -1;
+	}
+
+	int mailbox_no = atoi(argv[1]);
+	char mailbox_id[40];
+	msg_comm_t irecv = NULL;
+	msg_task_t r_msg = NULL;
+
+	sprintf(mailbox_id, "mailbox_%d", mailbox_no);
+
+	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
+	while (1)
+	{
+		irecv = MSG_task_irecv(&r_msg, mailbox_id);
+		int ret = MSG_comm_wait(irecv, -1); // see the doc
+
+		// it will see a goodbye meesage for termination
+		if (!ret)
+		{
+			unsigned int data_size = MSG_task_get_data_size(r_msg);
+			char* data = MSG_task_get_data(r_msg);
+			if (!strncpy(data, "finish", 6))
+			{
+				MSG_comm_destroy(irecv);
+				MSG_task_destroy(r_msg);
+				break;
+			}
+		}
+		MSG_comm_destroy(irecv);
+		MSG_task_destroy(r_msg);
+	}
+
+	return 0;
+}
+
 // Creates tasks and applies them to a machine.
 // To be same for all executions, we must consider two separate clusters that the created tasks will submit in
 // the order.
-int create_tasks(int argc, char* argv[])
+static int create_tasks(int argc, char* argv[])
 {
-	if (argc < 4)
+	if (argc < 5)
 	{
-		XBT_INFO("Must pass the number of process to be simulated, the seed of random numbers and rate of task arrival\n");
+		XBT_INFO("Must pass the number of process to be simulated,\
+				the seed of random numbers, number of VMs and rate of task arrival\n");
 		return -1;
 	}
 
 	int number_of_processes = atoi(argv[1]);
 	unsigned time_seed = atoi(argv[2]);
-	double r = 0; // the factor we use in jobs execution time
-	double m = 0;
-	double c = 0;
-	int target_vm = 0;
+	int number_of_vms = atoi(argv[3]);
+	double process_arrival_rate = atof(argv[4]);
+	srand(time_seed);
 
+	double arrival = 0;
+	unsigned int r = 0; // the factor we use in jobs execution time
+	unsigned int m = 0;
+	unsigned int c = 0;
+	unsigned int rand_task = 0;
+	unsigned int home_vm = 0;
+	unsigned int target_mailbox = 0;
+	msg_process_t process = NULL;
+	char process_name[40];
+	char process_argv[200];
+	int process_argc = 7;
+	msg_vm_t host = NULL;
+	
 	// Loops until creates all processes. We think that number of processes must be larger than 10000.
 	// 5% of tasks must be of 20/r CPU and 95% must be 2/r.
 	// The communication time is c% of CPU time.
 	int i = 0;
 	for (; i < number_of_processes; ++i)
 	{
+		arrival = rand() / RAND_MAX;
+		arrival = arrival == 1 ? arrival - 0.001 : arrival;
+		double sleep_time = -log(1 - arrival) / process_arrival_rate;
+		MSG_process_sleep(sleep_time);
+
+		r = rand();
+		m = rand();
+		c = rand();
+		rand_task = rand();
+		home_vm = rand();
+		target_mailbox = rand();
+
+		sprintf(process_name, "process_%d", i);
+		sprintf(process_argv, "%s %u %u %u %u %u %u", process_name, r, m, c,
+				rand_task, home_vm % number_of_vms, target_mailbox % number_of_vms);
+		
+		// Find a host based on the random number from vm's list
+		xbt_dynar_get_cpy(vm_list, home_vm % number_of_vms, host);
+
+		process = MSG_process_create_with_arguments( process_name
+												   , process_task
+												   , NULL
+												   , host
+												   , process_argc
+												   , (char**)&process_argv);
 
 	}
+
+	finish = 1;
+
 	return 0;
+}
+
+// It waits for incoming messages from all processes that says they have already been finished
+// Afterwards, it sends all vm listeners a message to finish listening
+static int get_finalize(int argc, char* argv[])
+{
+
 }
 
 //put this two functions in a process to be sync with other parts
@@ -314,6 +444,9 @@ int main(int argc, char *argv[])
     MSG_function_register("process_job", process_job);
     MSG_function_register("controller", controller);
 	MSG_function_register("create_tasks", create_tasks);
+	MSG_function_register("process_task", process_task);
+	MSG_function_register("process_mailbox", process_mailbox);
+	MSG_function_register("get_finalize", get_finalize);
 
 	launch_master(atoi(argv[3]), NUMBER_OF_PROCESSES);
 	MSG_launch_application(argv[2]);

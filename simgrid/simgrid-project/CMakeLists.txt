@@ -20,6 +20,7 @@ include_directories(
 
 add_executable(hpvc hpvc.c)
 
+#finding simgrid library
 find_library(SIMGRID
 	NAMES simgrid
 	PATHS /opt/simgrid/lib
@@ -29,6 +30,10 @@ find_library(SIMGRID
 		  /usr/local/lib64/
 )
 
+#Finding math library
+find_library(LIBMATH
+	NAMES m
+)
+
 ### Add definitions for compile
-#target_link_libraries(hpvc simgrid )
-target_link_libraries(hpvc ${SIMGRID})
+target_link_libraries(hpvc ${LIBMATH} ${SIMGRID})

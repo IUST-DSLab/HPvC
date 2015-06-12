@@ -191,7 +191,7 @@ int process_job(int argc, char* argv[])
 static int process_task(int argc, char* argv[])
 {
 	// Create the task with respect to parameters
-	if (argc < 7)
+	if (argc < 8)
 	{
 		XBT_INFO("Each process must be passed 6 arguments\n");
 		return -1;
@@ -203,6 +203,7 @@ static int process_task(int argc, char* argv[])
 	unsigned int rand_task = atoi(argv[4]);
 	unsigned int home_vm = atoi(argv[5]);
 	unsigned int target_mailbox = atoi(argv[6]);
+	int cluster_id = atoi(argv[7]);
 	double cpu_need;
 	double mem_need;
 	double msg_size;
@@ -250,16 +251,29 @@ static int process_task(int argc, char* argv[])
 	if (error != MSG_OK)
 		XBT_INFO("Failed to execute task! %s\n", exec_name);
 
-	MSG_task_dsend(comm_task, target_mailbox_name, NULL);
+	// TODO: Check if this time is not contribute to the real time
+	MSG_task_dsend(comm_task, target_mailbox_name, NULL);		
 
 	double real_finish_time = MSG_get_clock();
 
 	// Get task timing factors
-	
-	// Compute slow down of the task by dividing task_time by (real_finish_time - real_start_time)
-	
+	double cpu_time = RAND_MAX / (double)(r);
+	double expected_time = cpu_time * (1 + (double)(c) / RAND_MAX);
 
-	XBT_INFO("PID_%d is going to be off\n", MSG_process_self_PID());
+	// Compute slow down of the task by dividing task_time by (real_finish_time - real_start_time)
+	double actual_life_time = real_finish_time - real_start_time;
+
+	double slowdown = actual_life_time / expected_time;
+
+	XBT_INFO("PID_%d is going to be off with slowdown about: %f\n", MSG_process_self_PID(), slowdown);
+
+	char fin_name[40];
+	char fin_mailbox[20];
+	sprintf(fin_name, "fin_%d", MSG_process_self_PID());
+	sprintf(fin_mailbox, "fin_mailbox_%d", cluster_id);
+	msg_task_t fin_msg = MSG_task_create(fin_name, 0, 1, NULL);
+	MSG_task_dsend(fin_msg, fin_mailbox, NULL);
+
 	return 0;
 }
 
@@ -268,18 +282,19 @@ static int process_task(int argc, char* argv[])
 // It will be killed by another process of vm or vm itself on destroy phase.
 static int process_mailbox(int argc, char* argv[])
 {
-	if (argc < 2)
+	if (argc < 3)
 	{
-		XBT_INFO("mailbox: must pass vm number to create malbox\n");
+		XBT_INFO("mailbox: must pass vm number and cluster number to create malbox\n");
 		return -1;
 	}
 
 	int mailbox_no = atoi(argv[1]);
+	int cluster_id = atoi(argv[2]);
 	char mailbox_id[40];
 	msg_comm_t irecv = NULL;
 	msg_task_t r_msg = NULL;
 
-	sprintf(mailbox_id, "mailbox_%d", mailbox_no);
+	sprintf(mailbox_id, "mailbox_%d_%d", cluster_id, mailbox_no);
 
 	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
 	while (1)
@@ -311,7 +326,7 @@ static int process_mailbox(int argc, char* argv[])
 // the order.
 static int create_tasks(int argc, char* argv[])
 {
-	if (argc < 5)
+	if (argc < 6)
 	{
 		XBT_INFO("Must pass the number of process to be simulated,\
 				the seed of random numbers, number of VMs and rate of task arrival\n");
@@ -322,6 +337,7 @@ static int create_tasks(int argc, char* argv[])
 	unsigned time_seed = atoi(argv[2]);
 	int number_of_vms = atoi(argv[3]);
 	double process_arrival_rate = atof(argv[4]);
+	int cluster_id = atoi(argv[5]);
 	srand(time_seed);
 
 	double arrival = 0;
@@ -356,8 +372,8 @@ static int create_tasks(int argc, char* argv[])
 		target_mailbox = rand();
 
 		sprintf(process_name, "process_%d", i);
-		sprintf(process_argv, "%s %u %u %u %u %u %u", process_name, r, m, c,
-				rand_task, home_vm % number_of_vms, target_mailbox % number_of_vms);
+		sprintf(process_argv, "%s %u %u %u %u %u %u %d", process_name, r, m, c,
+				rand_task, home_vm % number_of_vms, target_mailbox % number_of_vms, cluster_id);
 		
 		// Find a host based on the random number from vm's list
 		xbt_dynar_get_cpy(vm_list, home_vm % number_of_vms, host);
@@ -380,7 +396,49 @@ static int create_tasks(int argc, char* argv[])
 // Afterwards, it sends all vm listeners a message to finish listening
 static int get_finalize(int argc, char* argv[])
 {
+	if (argc < 4)
+	{
+		XBT_INFO("get finalize must be passed cluster number, number of processes and vms\n");
+		return -1;
+	}
 
+	int cluster_id = atoi(argv[1]);
+	int number_of_processes = atoi(argv[2]);
+	int number_of_vms = atoi(argv[3]);
+
+	char fin_mailbox[20];
+	sprintf(fin_mailbox, "fin_mailbox_%d", cluster_id);
+
+	msg_comm_t irecv = NULL;
+	msg_task_t r_msg = NULL;
+
+
+	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
+	int i = 0;
+	for (; i < number_of_processes; ++i)
+	{
+		irecv = MSG_task_irecv(&r_msg, fin_mailbox);
+		int ret = MSG_comm_wait(irecv, -1); // see the doc
+		MSG_comm_destroy(irecv);
+		MSG_task_destroy(r_msg);
+	}
+
+	// We are sure about finalization of all processes
+	MSG_process_sleep(10);
+
+	// Send finish message to all vm listener
+	char vm_mailbox[40];
+	char fin_name[40];
+	msg_task_t fin_msg = NULL;
+	for (i = 0; i < number_of_vms; ++i)
+	{
+		sprintf(vm_mailbox, "mailbox_%d_%d", cluster_id, i);
+		sprintf(fin_name, "finish_%d_%d", cluster_id, i);
+		fin_msg = MSG_task_create(fin_name, 0, 6, "finish");
+		MSG_task_dsend(fin_msg, vm_mailbox, NULL);
+	}
+
+	return 0;
 }
 
 //put this two functions in a process to be sync with other parts

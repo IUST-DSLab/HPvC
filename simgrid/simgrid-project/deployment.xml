@@ -6,6 +6,7 @@
 		<argument value="4194304"/>
 		<argument value="20"/>
 		<argument value="0.1"/>
+		<argument value="1"/>
 	</process>
 	<!--***********************************************************************************************-->
 	<process host="c-4" function="controller">

@@ -29,6 +29,10 @@ typedef struct __attribute__((__packed__)) ProcessResourceConsumption
 
 static xbt_dynar_t vm_list[NUMBER_OF_CLUSTERS];
 
+static xbt_dynar_t hosts_dynar;
+static int number_of_involved_host; 
+static int total_cluster_host;
+
 // Create process and a task with the passing parameters of CPU, Memory and communication.
 // Communication will be done with another VM that is provided by create_task process.
 static int process_task(int argc, char* argv[])
@@ -66,7 +70,7 @@ static int process_task(int argc, char* argv[])
 	else
 	{
 		r = r == 0 ? 10 : r;
-		cpu_need = (RAND_MAX * 10 / (double)(r)) * 1e9;		// Based on description of opportunity cost paper
+		cpu_need = (RAND_MAX  / (double)(r)) * 1e10;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m == 0 ? 10 : m;
 		mem_need = (RAND_MAX / (double)(m)) * 1e9;		// MAX_MEM 0f each vm is 1e9
@@ -151,7 +155,7 @@ static int process_mailbox(int argc, char* argv[])
 		{
 			unsigned int data_size = MSG_task_get_data_size(r_msg);
 			char* data = MSG_task_get_data(r_msg);
-			if (!strncpy(data, "finish", 6))
+			if (!strncpy(data, "finish", data_size))
 			{
 				MSG_comm_destroy(irecv);
 				MSG_task_destroy(r_msg);
@@ -187,6 +191,9 @@ static void create_mailbox_processes(int cluster_id)
 				, vm
 				, 3
 				, (char**)process_argv);
+
+		xbt_free(vm);
+		vm = NULL;
 	}
 	return;
 }
@@ -260,6 +267,9 @@ static int create_tasks(int argc, char* argv[])
 												   , process_argc
 												   , (char**)&process_argv);
 
+		xbt_free(host);
+		host = NULL;
+
 	}
 
 	return 0;
@@ -316,21 +326,21 @@ static int get_finalize(int argc, char* argv[])
 
 // Put this two functions in a process to be sync with other parts
 // We assume that hosts are in a dynar based on their number and cluster declaration in cluster.xml
-static void launch_master(unsigned no_vm, unsigned no_process, int cluster_id)
+static void launch_master(unsigned no_vm, int cluster_id)
 {
 	vm_list[cluster_id - 1] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
-	xbt_dynar_t hosts_dynar = MSG_hosts_as_dynar();
 
 	// Number of VM per host
 	int vm_to_host = (NUMBER_OF_CLUSTERS * no_vm) / xbt_dynar_length(hosts_dynar);
 	// The last is the one who dose management for this step
-	int number_of_involved_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS - 1;
-	int total_cluster_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS;
 
 	int host = (cluster_id - 1) * total_cluster_host;
 	int max_host= host + no_vm / number_of_involved_host;
 
-	msg_host_t pm;
+	XBT_INFO("values for cluster_id: %d -> involved_host: %d, cluster_host: %d, host:%d , max_host:%d\n",
+			cluster_id, number_of_involved_host, total_cluster_host, host, max_host);
+
+	msg_host_t pm = NULL;
 
 	char vm_name[20];
 
@@ -344,7 +354,7 @@ static void launch_master(unsigned no_vm, unsigned no_process, int cluster_id)
 			j = 1;
 		}
 
-		XBT_INFO("vm_%d_%d is going to be created\n", cluster_id, i);
+		XBT_INFO("vm_%d_%d is going to be created on host %d\n", cluster_id, i, host);
 		pm = xbt_dynar_get_as(hosts_dynar, host, msg_host_t);
 
 		sprintf(vm_name, "vm_%d_%d", cluster_id, i);
@@ -365,7 +375,7 @@ static void launch_master(unsigned no_vm, unsigned no_process, int cluster_id)
 	}
 }
 
-static void destroy_master(unsigned no_vm, unsigned no_process, int cluster_id)
+static void destroy_master(unsigned no_vm, int cluster_id)
 {
 	msg_vm_t vm;
 
@@ -398,9 +408,9 @@ int main(int argc, char *argv[])
 {
 	msg_error_t res = MSG_OK;
 
-	if (argc < 5)
+	if (argc < 4)
 	{
-		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs> <number of processes> \n", argv[0]);
+		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs per cluster>\n", argv[0]);
 		exit(1);
 	}
 	/* Argument checking */
@@ -411,11 +421,15 @@ int main(int argc, char *argv[])
 	MSG_function_register("process_mailbox", process_mailbox);
 	MSG_function_register("get_finalize", get_finalize);
 
+	hosts_dynar = MSG_hosts_as_dynar();
+	number_of_involved_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS - 1;
+	total_cluster_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS;
+
 	int i = 0;
 	for (; i < NUMBER_OF_CLUSTERS; ++i)
 	{
 		vm_list[i] = NULL;
-		launch_master(atoi(argv[3]), atoi(argv[4]), i);
+		launch_master(atoi(argv[3]), i + 1);
 	}
 
 	MSG_launch_application(argv[2]);
@@ -425,7 +439,7 @@ int main(int argc, char *argv[])
 
 	for (i = 0; i < NUMBER_OF_CLUSTERS; ++i)
 	{
-		destroy_master(atoi(argv[3]), atoi(argv[4]), 1);
+		destroy_master(atoi(argv[3]), i + 1);
 		vm_list[i] = NULL;
 	}
 

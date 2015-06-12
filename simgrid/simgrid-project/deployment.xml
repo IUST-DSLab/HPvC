@@ -1,5 +1,6 @@
+
 <?xml version='1.0'?>
-<!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd"
+<!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd">
 <platform version="3">
 	<process host="c1-5" function="create_tasks">
 		<argument value="1000"/>		<!--number_of_processes--!>
@@ -27,4 +28,3 @@
 		<argument value="20"/>			<!--number_of_vms--!>
 	</process>
 </platform>
-

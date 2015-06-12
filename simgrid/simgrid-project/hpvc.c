@@ -27,9 +27,6 @@ typedef struct __attribute__((__packed__)) ProcessResourceConsumption
 	long double net;
 } process_resource_consumption;
 
-//xbt_mutex_t finish_guard;
-static int finish = 0;
-
 static xbt_dynar_t vm_list[NUMBER_OF_CLUSTERS];
 
 static xbt_dynar_t process_res_consumed;
@@ -52,6 +49,7 @@ static int process_task(int argc, char* argv[])
 	unsigned int home_vm = atoi(argv[5]);
 	unsigned int target_mailbox = atoi(argv[6]);
 	int cluster_id = atoi(argv[7]);
+
 	double cpu_need;
 	double mem_need;
 	double msg_size;
@@ -79,13 +77,12 @@ static int process_task(int argc, char* argv[])
 																			// 16e6 is bandwidth in byte/sec
 	}
 
-
 	char exec_name[20];
 	char msg_name[20];
 	sprintf(exec_name, "task_%d", MSG_process_self_PID());
 	sprintf(msg_name, "msg_%d", MSG_process_self_PID());
 	char target_mailbox_name[40];
-	sprintf(target_mailbox_name, "mailbox_%d", target_mailbox);
+	sprintf(target_mailbox_name, "mailbox_%d_%d", cluster_id, target_mailbox);
 	double real_start_time = MSG_get_clock();
 
 	// Do the task
@@ -113,7 +110,8 @@ static int process_task(int argc, char* argv[])
 
 	double slowdown = actual_life_time / expected_time;
 
-	XBT_INFO("PID_%d is going to be off with slowdown about: %f\n", MSG_process_self_PID(), slowdown);
+	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f\n", 
+			MSG_process_self_PID(), cluster_id, slowdown);
 
 	char fin_name[40];
 	char fin_mailbox[20];
@@ -186,6 +184,7 @@ static int create_tasks(int argc, char* argv[])
 	int number_of_vms = atoi(argv[3]);
 	double process_arrival_rate = atof(argv[4]);
 	int cluster_id = atoi(argv[5]);
+
 	srand(time_seed);
 
 	double arrival = 0;
@@ -195,6 +194,7 @@ static int create_tasks(int argc, char* argv[])
 	unsigned int rand_task = 0;
 	unsigned int home_vm = 0;
 	unsigned int target_mailbox = 0;
+
 	msg_process_t process = NULL;
 	char process_name[40];
 	char process_argv[200];
@@ -235,8 +235,6 @@ static int create_tasks(int argc, char* argv[])
 												   , (char**)&process_argv);
 
 	}
-
-	finish = 1;
 
 	return 0;
 }

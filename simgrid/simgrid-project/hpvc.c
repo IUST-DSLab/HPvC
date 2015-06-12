@@ -98,13 +98,13 @@ static int process_task(int argc, char* argv[])
 	char target_mailbox_name[40];
 	sprintf(target_mailbox_name, "mailbox_%d_%d", cluster_id, target_mailbox);
 	uint8_t* data = xbt_new0(uint8_t, (uint64_t)mem_need);
+	msg_task_t comm_task = MSG_task_create(msg_name, 0, msg_size, NULL);
 
 	double real_start_time = MSG_get_clock();
 
 	// Do the task
 
 	msg_task_t executive_task = MSG_task_create(exec_name, cpu_need, 0, data);
-	msg_task_t comm_task = MSG_task_create(msg_name, 0, msg_size, "");
 
 	msg_error_t error = MSG_task_execute(executive_task);
 	if (error != MSG_OK)
@@ -124,8 +124,8 @@ static int process_task(int argc, char* argv[])
 
 	double slowdown = actual_life_time / expected_time;
 
-	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f\n", 
-			MSG_process_self_PID(), cluster_id, slowdown, actual_life_time);
+	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f, expected: %f\n",
+			MSG_process_self_PID(), cluster_id, slowdown, actual_life_time, expected_time);
 
 	char fin_name[40];
 	char fin_mailbox[20];
@@ -133,6 +133,10 @@ static int process_task(int argc, char* argv[])
 	sprintf(fin_mailbox, "fin_mailbox");
 	msg_task_t fin_msg = MSG_task_create(fin_name, 0, 1, NULL);
 	MSG_task_dsend(fin_msg, fin_mailbox, NULL);
+
+	//XBT_INFO("message was sent to fin_mailbox\n");
+
+	MSG_process_sleep(10);
 
 	return 0;
 }
@@ -148,7 +152,7 @@ static int process_mailbox(int argc, char* argv[])
 		return -1;
 	}
 
-	XBT_INFO("%s %s\n", argv[1], argv[2]);
+	//XBT_INFO("%s %s\n", argv[1], argv[2]);
 
 	int mailbox_no = atoi(argv[1]);
 	int cluster_id = atoi(argv[2]);
@@ -169,15 +173,16 @@ static int process_mailbox(int argc, char* argv[])
 		{
 			unsigned int data_size = MSG_task_get_data_size(r_msg);
 			char* data = MSG_task_get_data(r_msg);
-			if (!strncpy(data, "finish", data_size))
-			{
-				MSG_comm_destroy(irecv);
-				MSG_task_destroy(r_msg);
-				break;
-			}
+			if (data != NULL)
+				if (!strncmp(data, "finish", data_size))
+				{
+					MSG_comm_destroy(irecv);
+					MSG_task_destroy(r_msg);
+					break;
+				}
+			MSG_comm_destroy(irecv);
+			MSG_task_destroy(r_msg);
 		}
-		MSG_comm_destroy(irecv);
-		MSG_task_destroy(r_msg);
 	}
 
 	return 0;
@@ -186,8 +191,6 @@ static int process_mailbox(int argc, char* argv[])
 // It create and runs mailbox_processes for each vm within a cluster
 static void create_mailbox_processes()
 {
-	char process_name[40];
-	char* process_argv[3];
 
 	msg_vm_t vm = NULL;
 	// Loop over vm_list and create a mailbox_process for each vm
@@ -195,10 +198,12 @@ static void create_mailbox_processes()
 	for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 	{
 		int size_of_vm_list = xbt_dynar_length(vm_list[cluster_id]);
-		XBT_INFO("size of vm list: %d\n", size_of_vm_list);
+		//XBT_INFO("size of vm list: %d\n", size_of_vm_list);
 		int i = 0;
 		for (; i < size_of_vm_list; ++i)
 		{
+			char process_name[40];
+			char** process_argv = xbt_new(char*, 3);
 			vm = xbt_dynar_get_as(vm_list[cluster_id], i, msg_vm_t);
 			sprintf(process_name, "%s_mbox_%d_%d", MSG_host_get_name(vm), cluster_id, i);
 			process_argv[0] = xbt_new0(char, 40);
@@ -212,8 +217,7 @@ static void create_mailbox_processes()
 					, NULL
 					, vm
 					, 3
-					, (char**)process_argv);
-
+					, process_argv);
 		}
 	}
 	return;
@@ -249,8 +253,6 @@ static int create_tasks(int argc, char* argv[])
 	unsigned int target_mailbox = 0;
 
 	msg_process_t process = NULL;
-	char process_name[40];
-	char* process_argv[8];
 	int process_argc = 8;
 	msg_vm_t host = NULL;
 	
@@ -275,6 +277,8 @@ static int create_tasks(int argc, char* argv[])
 		int cluster_id = 0;
 		for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 		{
+			char process_name[40];
+			char** process_argv = xbt_new(char*, 8);
 			sprintf(process_name, "process_%d_%d", cluster_id, i);
 			process_argv[0] = xbt_new0(char, 40);
 			sprintf(process_argv[0], "%s", process_name);
@@ -302,9 +306,10 @@ static int create_tasks(int argc, char* argv[])
 													   , NULL
 													   , host
 													   , process_argc
-													   , (char**)&process_argv);
+													   , process_argv);
 		}
-		XBT_INFO("process %d is assigned\n", i);
+
+		//XBT_INFO("process %d is assigned\n", i);
 	}
 
 	return 0;
@@ -336,11 +341,12 @@ static int get_finalize(int argc, char* argv[])
 	{
 		irecv = MSG_task_irecv(&r_msg, fin_mailbox);
 		int ret = MSG_comm_wait(irecv, -1); // see the doc
+		//XBT_INFO("Get a fin message %s, return_value: %d\n", MSG_task_get_name(r_msg), ret);
 		MSG_comm_destroy(irecv);
 		MSG_task_destroy(r_msg);
 		irecv = NULL;
 		r_msg = NULL;
-		XBT_INFO("number of finished process is : %d\n", i);
+		//XBT_INFO("number of finished process is : %d\n", i);
 	}
 
 	// We are sure about finalization of all processes
@@ -359,8 +365,11 @@ static int get_finalize(int argc, char* argv[])
 			sprintf(fin_name, "finish_%d_%d", cluster_id, i);
 			fin_msg = MSG_task_create(fin_name, 0, 6, "finish");
 			MSG_task_dsend(fin_msg, vm_mailbox, NULL);
+			MSG_process_sleep(2);
 		}
 	}
+
+	MSG_process_sleep(10);
 	return 0;
 }
 
@@ -377,8 +386,8 @@ static void launch_master(unsigned no_vm, int cluster_id)
 	int host = (cluster_id) * total_cluster_host;
 	int max_host= host + no_vm / number_of_involved_host;
 
-	XBT_INFO("values for cluster_id: %d -> involved_host: %d, cluster_host: %d, host:%d , max_host:%d\n",
-			cluster_id, number_of_involved_host, total_cluster_host, host, max_host);
+	//XBT_INFO("values for cluster_id: %d -> involved_host: %d, cluster_host: %d, host:%d , max_host:%d\n",
+	//		cluster_id, number_of_involved_host, total_cluster_host, host, max_host);
 
 	msg_host_t pm = NULL;
 
@@ -394,7 +403,7 @@ static void launch_master(unsigned no_vm, int cluster_id)
 			j = 1;
 		}
 
-		XBT_INFO("vm_%d_%d is going to be created on host %d\n", cluster_id, i, host);
+		//XBT_INFO("vm_%d_%d is going to be created on host %d\n", cluster_id, i, host);
 		pm = xbt_dynar_get_as(hosts_dynar, host, msg_host_t);
 
 		sprintf(vm_name, "vm_%d_%d", cluster_id, i);
@@ -411,7 +420,7 @@ static void launch_master(unsigned no_vm, int cluster_id)
 		MSG_vm_start(vm);
 
 
-		XBT_INFO("vm_%d_%d is started\n", cluster_id, i);
+		//XBT_INFO("vm_%d_%d is started\n", cluster_id, i);
 	}
 }
 

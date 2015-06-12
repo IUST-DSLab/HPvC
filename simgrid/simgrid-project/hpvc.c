@@ -68,10 +68,10 @@ static int process_task(int argc, char* argv[])
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
 		c = c == 0? 10 : c;
-		msg_size = ((double)(c) / (double)(r)) * 16e4;		// The msg_size based on cpu_need
+		msg_size = ((double)(c) / (double)(r)) * 4e6;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
 		cpu_time = RAND_MAX / (double)(r);
-		expected_time = cpu_time * (1 + (double)(c) / RAND_MAX);
+		expected_time = cpu_time + msg_size / 4e6;
 	}
 	else
 	{
@@ -82,10 +82,10 @@ static int process_task(int argc, char* argv[])
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
 		c = c == 0? 10 : c;
-		msg_size = ((double)(c) / (double)(r)) * 16e4;		// The msg_size based on cpu_need
+		msg_size = ((double)(c) / (double)(r)) * 4e6;		// The msg_size based on cpu_need
 																	// 16e6 is bandwidth in byte/sec
 		cpu_time = 10 * (RAND_MAX / (double)(r));
-		expected_time = cpu_time * (1 + (double)(c) / RAND_MAX);
+		expected_time = cpu_time  + msg_size / 4e6;
 	}
 
 	XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d, cpu_time: %f, expected: %f\n",
@@ -111,6 +111,7 @@ static int process_task(int argc, char* argv[])
 		XBT_INFO("Failed to execute task! %s\n", exec_name);
 
 	// TODO: Check if this time is not contribute to the real time
+	// It does not work. Get clock of sender and receiver and compare them
 	MSG_task_dsend(comm_task, target_mailbox_name, NULL);		
 
 	double real_finish_time = MSG_get_clock();

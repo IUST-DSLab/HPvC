@@ -1,17 +1,17 @@
 <?xml version='1.0'?>
 <!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd"
 <platform version="3">
-	<process host="c-0" function="create_tasks">
-		<argument value="1000"/>
-		<argument value="4194304"/>
-		<argument value="20"/>
-		<argument value="0.1"/>
-		<argument value="1"/>
+	<process host="c1-5" function="create_tasks">
+		<argument value="1000"/>		<!--number_of_processes--!>
+		<argument value="4194304"/>		<!--time_seed--!>
+		<argument value="20"/>			<!--number_of_vms--!>
+		<argument value="0.1"/>			<!--process_arrival_rate--!>
+		<argument value="1"/>			<!--cluster_id--!>
 	</process>
-	<!--***********************************************************************************************-->
-	<process host="c-4" function="controller">
-		<argument value="1000000"/>
+	<process host="c1-5" function="get_finalize">
+		<argument value="1"/>			<!--cluster_id--!>
+		<argument value="1000"/>		<!--number_of_processes--!>
+		<argument value="20"/>			<!--number_of_vms--!>
 	</process>
-	<!--***********************************************************************************************-->
 </platform>
 

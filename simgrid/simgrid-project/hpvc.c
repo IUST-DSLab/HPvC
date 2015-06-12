@@ -62,7 +62,7 @@ static int process_task(int argc, char* argv[])
 		cpu_need = (RAND_MAX / (double)(r)) * 1e9;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m == 0 ? 10 : m;
-		mem_need = (RAND_MAX / (double)(m)) * 1e9;		// MAX_MEM 0f each vm is 1e9
+		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
 		msg_size = ((double)(c) / RAND_MAX) * cpu_need * 16e6;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
@@ -73,7 +73,7 @@ static int process_task(int argc, char* argv[])
 		cpu_need = (RAND_MAX  / (double)(r)) * 1e10;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m == 0 ? 10 : m;
-		mem_need = (RAND_MAX / (double)(m)) * 1e9;		// MAX_MEM 0f each vm is 1e9
+		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
 		msg_size = ((double)(c) / RAND_MAX) * cpu_need * 16e5;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
@@ -85,11 +85,11 @@ static int process_task(int argc, char* argv[])
 	sprintf(msg_name, "msg_%d", MSG_process_self_PID());
 	char target_mailbox_name[40];
 	sprintf(target_mailbox_name, "mailbox_%d_%d", cluster_id, target_mailbox);
+	uint8_t* data = xbt_new0(uint8_t, (uint64_t)mem_need);
+
 	double real_start_time = MSG_get_clock();
 
 	// Do the task
-
-	uint8_t* data = xbt_new0(uint8_t, (uint64_t)mem_need);
 
 	msg_task_t executive_task = MSG_task_create(exec_name, cpu_need, 0, data);
 	msg_task_t comm_task = MSG_task_create(msg_name, 0, msg_size, "");
@@ -102,6 +102,8 @@ static int process_task(int argc, char* argv[])
 	MSG_task_dsend(comm_task, target_mailbox_name, NULL);		
 
 	double real_finish_time = MSG_get_clock();
+
+	xbt_free(data);
 
 	// Get task timing factors
 	double cpu_time = RAND_MAX / (double)(r);
@@ -118,7 +120,7 @@ static int process_task(int argc, char* argv[])
 	char fin_name[40];
 	char fin_mailbox[20];
 	sprintf(fin_name, "fin_%d", MSG_process_self_PID());
-	sprintf(fin_mailbox, "fin_mailbox_%d", cluster_id);
+	sprintf(fin_mailbox, "fin_mailbox");
 	msg_task_t fin_msg = MSG_task_create(fin_name, 0, 1, NULL);
 	MSG_task_dsend(fin_msg, fin_mailbox, NULL);
 
@@ -135,6 +137,8 @@ static int process_mailbox(int argc, char* argv[])
 		XBT_INFO("mailbox: must pass vm number and cluster number to create malbox\n");
 		return -1;
 	}
+
+	XBT_INFO("%s %s\n", argv[1], argv[2]);
 
 	int mailbox_no = atoi(argv[1]);
 	int cluster_id = atoi(argv[2]);
@@ -170,30 +174,37 @@ static int process_mailbox(int argc, char* argv[])
 }
 
 // It create and runs mailbox_processes for each vm within a cluster
-static void create_mailbox_processes(int cluster_id)
+static void create_mailbox_processes()
 {
 	char process_name[40];
-	char process_argv[200];
+	char* process_argv[3];
 
 	msg_vm_t vm = NULL;
 	// Loop over vm_list and create a mailbox_process for each vm
-	
-	int i = 0;
-	int size_of_vm_list = xbt_dynar_length(vm_list[cluster_id - 1]);
-	for (; i < ++size_of_vm_list; ++i)
+	int cluster_id = 0;
+	for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 	{
-		xbt_dynar_get_cpy(vm_list[cluster_id - 1], i, vm);
-		sprintf(process_name, "%s_mbox_%d_%d\0", MSG_host_get_name(vm), cluster_id, i);
-		sprintf(process_argv, "%s %d %d\0", process_name, i, cluster_id);
-		MSG_process_create_with_arguments(process_name
-				, process_mailbox
-				, NULL
-				, vm
-				, 3
-				, (char**)process_argv);
+		int size_of_vm_list = xbt_dynar_length(vm_list[cluster_id]);
+		XBT_INFO("size of vm list: %d\n", size_of_vm_list);
+		int i = 0;
+		for (; i < size_of_vm_list; ++i)
+		{
+			vm = xbt_dynar_get_as(vm_list[cluster_id], i, msg_vm_t);
+			sprintf(process_name, "%s_mbox_%d_%d", MSG_host_get_name(vm), cluster_id, i);
+			process_argv[0] = xbt_new0(char, 40);
+			sprintf(process_argv[0], "%s", process_name);
+			process_argv[1] = xbt_new0(char, 40);
+			sprintf(process_argv[1], "%d", i);
+			process_argv[2] = xbt_new0(char, 40);
+			sprintf(process_argv[2], "%d", cluster_id);
+			MSG_process_create_with_arguments(process_name
+					, process_mailbox
+					, NULL
+					, vm
+					, 3
+					, (char**)process_argv);
 
-		xbt_free(vm);
-		vm = NULL;
+		}
 	}
 	return;
 }
@@ -203,7 +214,7 @@ static void create_mailbox_processes(int cluster_id)
 // the order.
 static int create_tasks(int argc, char* argv[])
 {
-	if (argc < 6)
+	if (argc < 5)
 	{
 		XBT_INFO("Must pass the number of process to be simulated,\
 				the seed of random numbers, number of VMs and rate of task arrival\n");
@@ -214,9 +225,8 @@ static int create_tasks(int argc, char* argv[])
 	unsigned time_seed = atoi(argv[2]);
 	int number_of_vms = atoi(argv[3]);
 	double process_arrival_rate = atof(argv[4]);
-	int cluster_id = atoi(argv[5]);
 
-	create_mailbox_processes(cluster_id);
+	create_mailbox_processes();
 
 	srand(time_seed);
 
@@ -230,8 +240,8 @@ static int create_tasks(int argc, char* argv[])
 
 	msg_process_t process = NULL;
 	char process_name[40];
-	char process_argv[200];
-	int process_argc = 7;
+	char* process_argv[8];
+	int process_argc = 8;
 	msg_vm_t host = NULL;
 	
 	// Loops until creates all processes. We think that number of processes must be larger than 10000.
@@ -252,24 +262,38 @@ static int create_tasks(int argc, char* argv[])
 		home_vm = rand();
 		target_mailbox = rand();
 
-		sprintf(process_name, "process_%d", i);
-		sprintf(process_argv, "%s %u %u %u %u %u %u %d\0", process_name, r, m, c,
-				rand_task, home_vm % number_of_vms, target_mailbox % number_of_vms, cluster_id);
-		
-		// Find a host based on the random number from vm's list
+		int cluster_id = 0;
+		for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
+		{
+			sprintf(process_name, "process_%d_%d", cluster_id, i);
+			process_argv[0] = xbt_new0(char, 40);
+			sprintf(process_argv[0], "%s", process_name);
+			process_argv[1] = xbt_new0(char, 40);
+			sprintf(process_argv[1], "%u", r);
+			process_argv[2] = xbt_new0(char, 40);
+			sprintf(process_argv[2], "%u", m);
+			process_argv[3] = xbt_new0(char, 40);
+			sprintf(process_argv[3], "%u", c);
+			process_argv[4] = xbt_new0(char, 40);
+			sprintf(process_argv[4], "%u", rand_task);
+			process_argv[5] = xbt_new0(char, 40);
+			sprintf(process_argv[5], "%u", home_vm % number_of_vms);
+			process_argv[6] = xbt_new0(char, 40);
+			sprintf(process_argv[6], "%u", target_mailbox % number_of_vms);
+			process_argv[7] = xbt_new0(char, 40);
+			sprintf(process_argv[7], "%d", cluster_id);
+			
+			// Find a host based on the random number from vm's list
 
-		xbt_dynar_get_cpy(vm_list[cluster_id - 1], home_vm % number_of_vms, host);
+			host = xbt_dynar_get_as(vm_list[cluster_id], home_vm % number_of_vms, msg_vm_t);
 
-		process = MSG_process_create_with_arguments( process_name
-												   , process_task
-												   , NULL
-												   , host
-												   , process_argc
-												   , (char**)&process_argv);
-
-		xbt_free(host);
-		host = NULL;
-
+			process = MSG_process_create_with_arguments( process_name
+													   , process_task
+													   , NULL
+													   , host
+													   , process_argc
+													   , (char**)&process_argv);
+		}
 	}
 
 	return 0;
@@ -279,18 +303,17 @@ static int create_tasks(int argc, char* argv[])
 // Afterwards, it sends all vm listeners a message to finish listening
 static int get_finalize(int argc, char* argv[])
 {
-	if (argc < 4)
+	if (argc < 3)
 	{
-		XBT_INFO("get finalize must be passed cluster number, number of processes and vms\n");
+		XBT_INFO("get finalize must be passes number of processes and vms\n");
 		return -1;
 	}
 
-	int cluster_id = atoi(argv[1]);
-	int number_of_processes = atoi(argv[2]);
-	int number_of_vms = atoi(argv[3]);
+	int number_of_processes = atoi(argv[1]);
+	int number_of_vms = atoi(argv[2]);
 
 	char fin_mailbox[20];
-	sprintf(fin_mailbox, "fin_mailbox_%d", cluster_id);
+	sprintf(fin_mailbox, "fin_mailbox");
 
 	msg_comm_t irecv = NULL;
 	msg_task_t r_msg = NULL;
@@ -298,12 +321,14 @@ static int get_finalize(int argc, char* argv[])
 
 	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
 	int i = 0;
-	for (; i < number_of_processes; ++i)
+	for (; i < NUMBER_OF_CLUSTERS * number_of_processes; ++i)
 	{
 		irecv = MSG_task_irecv(&r_msg, fin_mailbox);
 		int ret = MSG_comm_wait(irecv, -1); // see the doc
 		MSG_comm_destroy(irecv);
 		MSG_task_destroy(r_msg);
+		irecv = NULL;
+		r_msg = NULL;
 	}
 
 	// We are sure about finalization of all processes
@@ -313,14 +338,17 @@ static int get_finalize(int argc, char* argv[])
 	char vm_mailbox[40];
 	char fin_name[40];
 	msg_task_t fin_msg = NULL;
-	for (i = 0; i < number_of_vms; ++i)
+	int cluster_id = 0;
+	for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 	{
-		sprintf(vm_mailbox, "mailbox_%d_%d", cluster_id, i);
-		sprintf(fin_name, "finish_%d_%d", cluster_id, i);
-		fin_msg = MSG_task_create(fin_name, 0, 6, "finish");
-		MSG_task_dsend(fin_msg, vm_mailbox, NULL);
+		for (i = 0; i < number_of_vms; ++i)
+		{
+			sprintf(vm_mailbox, "mailbox_%d_%d", cluster_id, i);
+			sprintf(fin_name, "finish_%d_%d", cluster_id, i);
+			fin_msg = MSG_task_create(fin_name, 0, 6, "finish");
+			MSG_task_dsend(fin_msg, vm_mailbox, NULL);
+		}
 	}
-
 	return 0;
 }
 
@@ -328,13 +356,13 @@ static int get_finalize(int argc, char* argv[])
 // We assume that hosts are in a dynar based on their number and cluster declaration in cluster.xml
 static void launch_master(unsigned no_vm, int cluster_id)
 {
-	vm_list[cluster_id - 1] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
+	vm_list[cluster_id] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
 
 	// Number of VM per host
 	int vm_to_host = (NUMBER_OF_CLUSTERS * no_vm) / xbt_dynar_length(hosts_dynar);
 	// The last is the one who dose management for this step
 
-	int host = (cluster_id - 1) * total_cluster_host;
+	int host = (cluster_id) * total_cluster_host;
 	int max_host= host + no_vm / number_of_involved_host;
 
 	XBT_INFO("values for cluster_id: %d -> involved_host: %d, cluster_host: %d, host:%d , max_host:%d\n",
@@ -366,7 +394,7 @@ static void launch_master(unsigned no_vm, int cluster_id)
 		msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
 		MSG_host_set_params(vm, &params);
 
-		xbt_dynar_set(vm_list[cluster_id - 1], i, &vm);
+		xbt_dynar_set(vm_list[cluster_id], i, &vm);
 
 		MSG_vm_start(vm);
 
@@ -380,12 +408,12 @@ static void destroy_master(unsigned no_vm, int cluster_id)
 	msg_vm_t vm;
 
 	int i = 0;
-	while (!xbt_dynar_is_empty(vm_list[cluster_id - 1]))
+	while (!xbt_dynar_is_empty(vm_list[cluster_id]))
 	{
 		++i;
 		XBT_INFO("vm_%d_%d is going to be destroyed\n", cluster_id, i);
 
-		xbt_dynar_remove_at(vm_list[cluster_id - 1], 0, &vm);
+		xbt_dynar_remove_at(vm_list[cluster_id], 0, &vm);
 
 		if (MSG_vm_is_running(vm))
 			MSG_vm_shutdown(vm);
@@ -401,7 +429,7 @@ static void destroy_master(unsigned no_vm, int cluster_id)
 		XBT_INFO("vm_%d_%d is destroyed\n", cluster_id, i);
 	}
 
-	xbt_dynar_free(&vm_list[cluster_id - 1]);
+	xbt_dynar_free(&vm_list[cluster_id]);
 }
 
 int main(int argc, char *argv[])
@@ -422,14 +450,14 @@ int main(int argc, char *argv[])
 	MSG_function_register("get_finalize", get_finalize);
 
 	hosts_dynar = MSG_hosts_as_dynar();
-	number_of_involved_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS - 1;
-	total_cluster_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS;
+	number_of_involved_host = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS - 1;
+	total_cluster_host = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS;
 
 	int i = 0;
 	for (; i < NUMBER_OF_CLUSTERS; ++i)
 	{
 		vm_list[i] = NULL;
-		launch_master(atoi(argv[3]), i + 1);
+		launch_master(atoi(argv[3]), i);
 	}
 
 	MSG_launch_application(argv[2]);
@@ -439,7 +467,7 @@ int main(int argc, char *argv[])
 
 	for (i = 0; i < NUMBER_OF_CLUSTERS; ++i)
 	{
-		destroy_master(atoi(argv[3]), i + 1);
+		destroy_master(atoi(argv[3]), i);
 		vm_list[i] = NULL;
 	}
 

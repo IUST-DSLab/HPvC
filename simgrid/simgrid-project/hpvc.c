@@ -56,6 +56,9 @@ static int process_task(int argc, char* argv[])
 	double mem_need;
 	double msg_size;
 
+	double cpu_time;
+	double expected_time;
+
 	if (((double)(rand_task) / RAND_MAX) < 0.95)
 	{
 		r = r == 0 ? 10 : r;
@@ -64,8 +67,11 @@ static int process_task(int argc, char* argv[])
 		m = m == 0 ? 10 : m;
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
-		msg_size = ((double)(c) / RAND_MAX) * cpu_need * 16e6;		// The msg_size based on cpu_need
+		c = c == 0? 10 : c;
+		msg_size = ((double)(c) / (double)(r)) * 16e4;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
+		cpu_time = RAND_MAX / (double)(r);
+		expected_time = cpu_time * (1 + (double)(c) / RAND_MAX);
 	}
 	else
 	{
@@ -75,9 +81,15 @@ static int process_task(int argc, char* argv[])
 		m = m == 0 ? 10 : m;
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
-		msg_size = ((double)(c) / RAND_MAX) * cpu_need * 16e5;		// The msg_size based on cpu_need
-																			// 16e6 is bandwidth in byte/sec
+		c = c == 0? 10 : c;
+		msg_size = ((double)(c) / (double)(r)) * 16e4;		// The msg_size based on cpu_need
+																	// 16e6 is bandwidth in byte/sec
+		cpu_time = 10 * (RAND_MAX / (double)(r));
+		expected_time = cpu_time * (1 + (double)(c) / RAND_MAX);
 	}
+
+	XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d, cpu_time: %f, expected: %f\n",
+			cpu_need, mem_need, msg_size, cluster_id, home_vm, MSG_process_self_PID(), cpu_time, expected_time);
 
 	char exec_name[20];
 	char msg_name[20];
@@ -106,16 +118,14 @@ static int process_task(int argc, char* argv[])
 	xbt_free(data);
 
 	// Get task timing factors
-	double cpu_time = RAND_MAX / (double)(r);
-	double expected_time = cpu_time * (1 + (double)(c) / RAND_MAX);
 
 	// Compute slow down of the task by dividing task_time by (real_finish_time - real_start_time)
 	double actual_life_time = real_finish_time - real_start_time;
 
 	double slowdown = actual_life_time / expected_time;
 
-	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f\n", 
-			MSG_process_self_PID(), cluster_id, slowdown);
+	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f\n", 
+			MSG_process_self_PID(), cluster_id, slowdown, actual_life_time);
 
 	char fin_name[40];
 	char fin_mailbox[20];
@@ -294,6 +304,7 @@ static int create_tasks(int argc, char* argv[])
 													   , process_argc
 													   , (char**)&process_argv);
 		}
+		XBT_INFO("process %d is assigned\n", i);
 	}
 
 	return 0;
@@ -329,6 +340,7 @@ static int get_finalize(int argc, char* argv[])
 		MSG_task_destroy(r_msg);
 		irecv = NULL;
 		r_msg = NULL;
+		XBT_INFO("number of finished process is : %d\n", i);
 	}
 
 	// We are sure about finalization of all processes

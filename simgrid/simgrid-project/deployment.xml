@@ -13,5 +13,18 @@
 		<argument value="1000"/>		<!--number_of_processes--!>
 		<argument value="20"/>			<!--number_of_vms--!>
 	</process>
+	<!--################################################################--!>
+	<process host="c2-5" function="create_tasks">
+		<argument value="1000"/>		<!--number_of_processes--!>
+		<argument value="4194304"/>		<!--time_seed--!>
+		<argument value="20"/>			<!--number_of_vms--!>
+		<argument value="0.1"/>			<!--process_arrival_rate--!>
+		<argument value="1"/>			<!--cluster_id--!>
+	</process>
+	<process host="c2-5" function="get_finalize">
+		<argument value="1"/>			<!--cluster_id--!>
+		<argument value="1000"/>		<!--number_of_processes--!>
+		<argument value="20"/>			<!--number_of_vms--!>
+	</process>
 </platform>
 

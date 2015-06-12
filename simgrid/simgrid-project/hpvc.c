@@ -29,8 +29,6 @@ typedef struct __attribute__((__packed__)) ProcessResourceConsumption
 
 static xbt_dynar_t vm_list[NUMBER_OF_CLUSTERS];
 
-static xbt_dynar_t process_res_consumed;
-
 // Create process and a task with the passing parameters of CPU, Memory and communication.
 // Communication will be done with another VM that is provided by create_task process.
 static int process_task(int argc, char* argv[])
@@ -167,6 +165,32 @@ static int process_mailbox(int argc, char* argv[])
 	return 0;
 }
 
+// It create and runs mailbox_processes for each vm within a cluster
+static void create_mailbox_processes(int cluster_id)
+{
+	char process_name[40];
+	char process_argv[200];
+
+	msg_vm_t vm = NULL;
+	// Loop over vm_list and create a mailbox_process for each vm
+	
+	int i = 0;
+	int size_of_vm_list = xbt_dynar_length(vm_list[cluster_id - 1]);
+	for (; i < ++size_of_vm_list; ++i)
+	{
+		xbt_dynar_get_cpy(vm_list[cluster_id - 1], i, vm);
+		sprintf(process_name, "%s_mbox_%d_%d\0", MSG_host_get_name(vm), cluster_id, i);
+		sprintf(process_argv, "%s %d %d\0", process_name, i, cluster_id);
+		MSG_process_create_with_arguments(process_name
+				, process_mailbox
+				, NULL
+				, vm
+				, 3
+				, (char**)process_argv);
+	}
+	return;
+}
+
 // Creates tasks and applies them to a machine.
 // To be same for all executions, we must consider two separate clusters that the created tasks will submit in
 // the order.
@@ -184,6 +208,8 @@ static int create_tasks(int argc, char* argv[])
 	int number_of_vms = atoi(argv[3]);
 	double process_arrival_rate = atof(argv[4]);
 	int cluster_id = atoi(argv[5]);
+
+	create_mailbox_processes(cluster_id);
 
 	srand(time_seed);
 
@@ -220,12 +246,12 @@ static int create_tasks(int argc, char* argv[])
 		target_mailbox = rand();
 
 		sprintf(process_name, "process_%d", i);
-		sprintf(process_argv, "%s %u %u %u %u %u %u %d", process_name, r, m, c,
+		sprintf(process_argv, "%s %u %u %u %u %u %u %d\0", process_name, r, m, c,
 				rand_task, home_vm % number_of_vms, target_mailbox % number_of_vms, cluster_id);
 		
 		// Find a host based on the random number from vm's list
 
-		xbt_dynar_get_cpy(vm_list[cluster_id], home_vm % number_of_vms, host);
+		xbt_dynar_get_cpy(vm_list[cluster_id - 1], home_vm % number_of_vms, host);
 
 		process = MSG_process_create_with_arguments( process_name
 												   , process_task
@@ -288,23 +314,35 @@ static int get_finalize(int argc, char* argv[])
 	return 0;
 }
 
-//put this two functions in a process to be sync with other parts
+// Put this two functions in a process to be sync with other parts
+// We assume that hosts are in a dynar based on their number and cluster declaration in cluster.xml
 static void launch_master(unsigned no_vm, unsigned no_process, int cluster_id)
 {
-	vm_list[cluster_id] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
+	vm_list[cluster_id - 1] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
 	xbt_dynar_t hosts_dynar = MSG_hosts_as_dynar();
 
-	int host = 0;
-	int max_host= no_vm / xbt_dynar_length(hosts_dynar);
+	// Number of VM per host
+	int vm_to_host = (NUMBER_OF_CLUSTERS * no_vm) / xbt_dynar_length(hosts_dynar);
+	// The last is the one who dose management for this step
+	int number_of_involved_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS - 1;
+	int total_cluster_host = xbt_dynar_length(hosts_dynar) / NUMBER_OF_CLUSTERS;
+
+	int host = (cluster_id - 1) * total_cluster_host;
+	int max_host= host + no_vm / number_of_involved_host;
 
 	msg_host_t pm;
 
 	char vm_name[20];
 
 	int i = 0;
-	for (i = 0; i < no_vm; ++i)
+	int j = 1;
+	for (i = 0; i < no_vm; ++i, ++j)
 	{
-		host = i / 4;
+		if (j / number_of_involved_host)
+		{
+			++host;
+			j = 1;
+		}
 
 		XBT_INFO("vm_%d_%d is going to be created\n", cluster_id, i);
 		pm = xbt_dynar_get_as(hosts_dynar, host, msg_host_t);
@@ -318,44 +356,26 @@ static void launch_master(unsigned no_vm, unsigned no_process, int cluster_id)
 		msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
 		MSG_host_set_params(vm, &params);
 
-		xbt_dynar_set(vm_list[cluster_id], i, &vm);
+		xbt_dynar_set(vm_list[cluster_id - 1], i, &vm);
 
 		MSG_vm_start(vm);
 
-		XBT_INFO("vm_%d_%d is started\n", cluster_id, i);
-	}
 
-	process_res_consumed = xbt_dynar_new(sizeof(process_resource_consumption), NULL); 
-	for (i = 0; i < no_process; ++i)
-	{
-		process_resource_consumption prc;
-		memset(&prc, 0, sizeof(process_resource_consumption));
-		xbt_dynar_set(process_res_consumed, i, &prc);
+		XBT_INFO("vm_%d_%d is started\n", cluster_id, i);
 	}
 }
 
 static void destroy_master(unsigned no_vm, unsigned no_process, int cluster_id)
 {
 	msg_vm_t vm;
-	process_resource_consumption prc;
 
 	int i = 0;
-	while (!xbt_dynar_is_empty(process_res_consumed))
-	{
-		++i;
-
-		xbt_dynar_remove_at(process_res_consumed, 0, &prc);
-	}
-
-	xbt_dynar_free(&process_res_consumed);
-
-	i = 0;
-	while (!xbt_dynar_is_empty(vm_list[cluster_id]))
+	while (!xbt_dynar_is_empty(vm_list[cluster_id - 1]))
 	{
 		++i;
 		XBT_INFO("vm_%d_%d is going to be destroyed\n", cluster_id, i);
 
-		xbt_dynar_remove_at(vm_list[cluster_id], 0, &vm);
+		xbt_dynar_remove_at(vm_list[cluster_id - 1], 0, &vm);
 
 		if (MSG_vm_is_running(vm))
 			MSG_vm_shutdown(vm);
@@ -371,7 +391,7 @@ static void destroy_master(unsigned no_vm, unsigned no_process, int cluster_id)
 		XBT_INFO("vm_%d_%d is destroyed\n", cluster_id, i);
 	}
 
-	xbt_dynar_free(&vm_list[cluster_id]);
+	xbt_dynar_free(&vm_list[cluster_id - 1]);
 }
 
 int main(int argc, char *argv[])

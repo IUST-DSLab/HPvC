@@ -1,0 +1,19 @@
+<?xml version='1.0'?>
+<!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd">
+<!--             _________
+                |          |
+                |  router  |
+    ____________|__________|_____________ backbone
+      |   |   |              |     |   |  	
+    l0|	l1| l2|           l97| l96 |   | l99
+      |   |   |   ........   |     |   |
+      |                                |
+    c-0.me                             c-99.me	
+-->
+<platform version="3">
+<AS  id="AS0"  routing="Full">
+  <cluster id="my_cluster_1" prefix="c-" suffix=""
+  		radical="0-12"	power="1Gf" core="4"   bw="125MBps"     lat="50us"
+        bb_bw="4.5GBps" bb_lat="500us"/>
+</AS>
+</platform>

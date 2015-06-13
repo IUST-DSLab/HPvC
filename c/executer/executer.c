@@ -13,8 +13,8 @@
 
 #define TP_PASS "123"
 #define TP_PORT 23632
-#define TP_SOURCE "172.17.10.80"
-#define TP_TARGET "172.17.8.165"
+#define TP_SOURCE "172.17.10.45"
+#define TP_TARGET "172.17.9.132"
 
 
 
@@ -31,6 +31,8 @@ ISession *tp_session = NULL;
 
 struct VMMetadata *metadatas;
 int metadatas_len;
+
+char *host_ip;
 
 zactor_t *comm;
 
@@ -71,12 +73,19 @@ int main(int argc, char *argv[]) {
 
   metadatas_len = 0;
   metadatas = malloc(5 * sizeof(struct VMMetadata));
+
+  host_ip = malloc(20 * sizeof(char));
+  host_ip = get_host_ip(host_ip);
+
+  printf("Host IP: %s\n", host_ip);
+
   comm = zactor_new(comm_actor, NULL);
 
   /*sleep(2);*/
   /*zstr_send(comm, "1");*/
 
   sleep(60);
+  free(host_ip);
   _exit(0);
 }
 
@@ -184,7 +193,10 @@ void comm_actor(zsock_t *pipe, void *args) {
           struct VMMetadata vm_md = {home: md->home, n_history: md->n_history + 1, history: md->history};
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
           vm_md.history[vm_md.n_history - 1] = TP_TARGET;
-
+          if (metadatas_len % 5 == 0) {
+            metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
+          }
+          metadatas[len++] = vm_md;
           printf("VM MD object home: %s\thistory_len: %d\n", vm_md.home, vm_md.n_history);
           int i = 0;
           for (i = 0; i <= md->n_history; i++) {
@@ -287,6 +299,38 @@ void teleport(char *name, char *target) {
   printf("%s\n", st);
   free(st);
 }
+
+char *get_host_ip(char *host) {
+  struct ifaddrs *ifaddr, *ifa;
+  int family, s;
+
+  if (getifaddrs(&ifaddr) == -1)
+  {
+    perror("getifaddrs");
+    exit(EXIT_FAILURE);
+  }
+
+  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next)
+  {
+    if (ifa->ifa_addr == NULL)
+      continue;
+
+    s=getnameinfo(ifa->ifa_addr,sizeof(struct sockaddr_in),host, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+
+    if((strcmp(ifa->ifa_name,"eth0")==0 || strcmp(ifa->ifa_name,"p4p1")==0)&&(ifa->ifa_addr->sa_family==AF_INET))
+    {
+      if (s != 0)
+      {
+          printf("getnameinfo() failed: %s\n", gai_strerror(s));
+          exit(EXIT_FAILURE);
+      }
+      return host;
+    }
+  }
+
+  freeifaddrs(ifaddr);
+}
+
 void log_err(char *err) {
   fprintf(stderr, err);
 }

@@ -201,10 +201,10 @@ void comm_actor(zsock_t *pipe, void *args) {
           IProgress_get_ResultCode(tp_progress, &rc);
           if (FAILED(rc)) {
             printf("Return code %x\n", rc);
-            IVirtualBoxErrorInfo err;
+            IVirtualBoxErrorInfo *err;
             IProgress_get_ErrorInfo(tp_progress, &err);
             if (err != NULL) {
-              BSTR text;
+              BSTR textu;
               char *text;
               IVirtualBoxErrorInfo_get_Text(err, &textu);
               g_pVBoxFuncs->pfnUtf16ToUtf8(textu, &text);

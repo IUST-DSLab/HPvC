@@ -136,9 +136,9 @@ static int process_task(int argc, char* argv[])
 	sprintf(fin_name, "fin_%d", MSG_process_self_PID());
 	sprintf(fin_mailbox, "fin_mailbox");
 	msg_task_t fin_msg = MSG_task_create(fin_name, 0, 1, NULL);
-	MSG_task_dsend(fin_msg, fin_mailbox, NULL);
-
-	MSG_process_sleep(10);
+	ret = MSG_OK;
+	while ((ret = MSG_task_send(fin_msg, fin_mailbox)) != MSG_OK)
+		XBT_INFO("fail to send fin message\n");
 
 	return 0;
 }
@@ -257,9 +257,8 @@ static int create_tasks(int argc, char* argv[])
 	for (; i < number_of_processes; ++i)
 	{
 		arrival = ((double)rand()) / RAND_MAX;
-		arrival = arrival == 1 ? arrival - 0.001 : arrival;
+		arrival = arrival == 1 ? arrival - 0.005 : arrival;
 		double sleep_time = -log(1 - arrival) / process_arrival_rate;
-		XBT_INFO("sleep for :%f", sleep_time);
 		MSG_process_sleep(sleep_time);
 
 		r = rand();
@@ -332,8 +331,10 @@ static int get_finalize(int argc, char* argv[])
 	int i = 0;
 	for (; i < NUMBER_OF_CLUSTERS * number_of_processes; ++i)
 	{
-		irecv = MSG_task_irecv(&r_msg, fin_mailbox);
-		int ret = MSG_comm_wait(irecv, -1); // see the doc
+		int ret = MSG_OK;
+		while ((ret = MSG_task_receive(&r_msg, fin_mailbox) != MSG_OK))
+			XBT_INFO("file to receive the fin from process\n");
+
 		MSG_comm_destroy(irecv);
 		MSG_task_destroy(r_msg);
 		irecv = NULL;

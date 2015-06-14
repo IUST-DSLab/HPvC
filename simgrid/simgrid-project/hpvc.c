@@ -20,6 +20,14 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 
 #define NUMBER_OF_CLUSTERS 2
 
+typedef struct slow_down_t
+{
+	double expected_time;
+	double actual_time;
+} SlowDown;
+
+static xbt_dynar_t slow_down[NUMBER_OF_CLUSTERS];
+
 typedef struct __attribute__((__packed__)) ProcessResourceConsumption
 {
 	long double cpu;
@@ -38,9 +46,9 @@ static int total_cluster_host;
 static int process_task(int argc, char* argv[])
 {
 	// Create the task with respect to parameters
-	if (argc < 8)
+	if (argc < 9)
 	{
-		XBT_INFO("Each process must be passed 6 arguments\n");
+		XBT_INFO("Each process must be passed 9 arguments\n");
 		return -1;
 	}
 
@@ -51,6 +59,7 @@ static int process_task(int argc, char* argv[])
 	unsigned int home_vm = atoi(argv[5]);
 	unsigned int target_mailbox = atoi(argv[6]);
 	int cluster_id = atoi(argv[7]);
+	int process_sequence = atoi(argv[8]);
 
 	double cpu_need;
 	double mem_need;
@@ -68,7 +77,7 @@ static int process_task(int argc, char* argv[])
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
 		c = c <= 10? 10 : c;
-		msg_size = (RAND_MAX / (double)(c)) * 3.2e6;		// The msg_size based on cpu_need
+		msg_size = (RAND_MAX / (double)(c)) * 3.2e7;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
 		cpu_time = RAND_MAX / (double)(r);
 		expected_time = cpu_time + msg_size / 1.25e8;
@@ -82,7 +91,7 @@ static int process_task(int argc, char* argv[])
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
 		c = c <= 10? 10 : c;
-		msg_size = ((double)(c) / (double)(r)) * 3.2e6;		// The msg_size based on cpu_need
+		msg_size = ((double)(c) / (double)(r)) * 3.2e7;		// The msg_size based on cpu_need
 																	// 16e6 is bandwidth in byte/sec
 		cpu_time = 10 * (RAND_MAX / (double)(r));
 		expected_time = cpu_time  + msg_size / 1.25e8;
@@ -130,6 +139,11 @@ static int process_task(int argc, char* argv[])
 
 	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f, expected: %f\n",
 			MSG_process_self_PID(), cluster_id, slowdown, actual_life_time, expected_time);
+
+	((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], process_sequence))->
+		actual_time = actual_life_time;
+	((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], process_sequence))->
+		expected_time = expected_time;
 
 	char fin_name[40];
 	char fin_mailbox[20];
@@ -247,7 +261,7 @@ static int create_tasks(int argc, char* argv[])
 	unsigned int target_mailbox = 0;
 
 	msg_process_t process = NULL;
-	int process_argc = 8;
+	int process_argc = 9;
 	msg_vm_t host = NULL;
 	
 	// Loops until creates all processes. We think that number of processes must be larger than 10000.
@@ -272,7 +286,7 @@ static int create_tasks(int argc, char* argv[])
 		for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 		{
 			char process_name[40];
-			char** process_argv = xbt_new(char*, 8);
+			char** process_argv = xbt_new(char*, 9);
 			sprintf(process_name, "process_%d_%d", cluster_id, i);
 			process_argv[0] = xbt_new0(char, 40);
 			sprintf(process_argv[0], "%s", process_name);
@@ -290,6 +304,8 @@ static int create_tasks(int argc, char* argv[])
 			sprintf(process_argv[6], "%u", target_mailbox % number_of_vms);
 			process_argv[7] = xbt_new0(char, 40);
 			sprintf(process_argv[7], "%d", cluster_id);
+			process_argv[8] = xbt_new0(char, 40);
+			sprintf(process_argv[8], "%d", i);
 			
 			// Find a host based on the random number from vm's list
 
@@ -370,12 +386,21 @@ static int get_finalize(int argc, char* argv[])
 
 // Put this two functions in a process to be sync with other parts
 // We assume that hosts are in a dynar based on their number and cluster declaration in cluster.xml
-static void launch_master(unsigned no_vm, int cluster_id)
+static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 {
+	slow_down[cluster_id] = xbt_dynar_new(sizeof(SlowDown), NULL);
+	int i = 0;
+	for (; i < no_process; ++i)
+	{
+		SlowDown slow_down_process;
+		memset(&slow_down_process, 0, sizeof(slow_down_process));
+		xbt_dynar_set(slow_down[cluster_id], i, &slow_down_process);
+	}
+
 	vm_list[cluster_id] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
 
 	// Number of VM per host
-	int vm_to_host = (NUMBER_OF_CLUSTERS * no_vm) / xbt_dynar_length(hosts_dynar);
+	int vm_to_host = (NUMBER_OF_CLUSTERS * no_vm) / number_of_involved_host;
 
 	// The last is the one who dose management for this step
 	int host = (cluster_id) * total_cluster_host;
@@ -385,11 +410,10 @@ static void launch_master(unsigned no_vm, int cluster_id)
 
 	char vm_name[20];
 
-	int i = 0;
 	int j = 1;
 	for (i = 0; i < no_vm; ++i, ++j)
 	{
-		if (j / number_of_involved_host)
+		if (j / vm_to_host)
 		{
 			++host;
 			j = 1;
@@ -412,7 +436,7 @@ static void launch_master(unsigned no_vm, int cluster_id)
 	}
 }
 
-static void destroy_master(unsigned no_vm, int cluster_id)
+static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 {
 	msg_vm_t vm;
 
@@ -436,15 +460,30 @@ static void destroy_master(unsigned no_vm, int cluster_id)
 	}
 
 	xbt_dynar_free(&vm_list[cluster_id]);
+
+	double slowdown, actual, expected;
+	for (i = 0; i < no_process; ++i)
+	{
+		actual = ((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], i))->actual_time;
+		expected = ((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], i))->expected_time;
+
+		slowdown = actual / expected;
+
+		printf("process: %d, slow down: %f, actual time: %f, expected time: %f\n",
+				i, slowdown, actual, expected);
+	}
+	// Use information before free
+	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
+	xbt_dynar_free(&slow_down[cluster_id]);
 }
 
 int main(int argc, char *argv[])
 {
 	msg_error_t res = MSG_OK;
 
-	if (argc < 4)
+	if (argc < 5)
 	{
-		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs per cluster>\n", argv[0]);
+		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs per cluster> <number of processes>\n", argv[0]);
 		exit(1);
 	}
 	/* Argument checking */
@@ -463,7 +502,7 @@ int main(int argc, char *argv[])
 	for (; i < NUMBER_OF_CLUSTERS; ++i)
 	{
 		vm_list[i] = NULL;
-		launch_master(atoi(argv[3]), i);
+		launch_master(atoi(argv[3]), atoi(argv[4]), i);
 	}
 
 	MSG_launch_application(argv[2]);
@@ -473,7 +512,7 @@ int main(int argc, char *argv[])
 
 	for (i = 0; i < NUMBER_OF_CLUSTERS; ++i)
 	{
-		destroy_master(atoi(argv[3]), i);
+		destroy_master(atoi(argv[3]), atoi(argv[4]), i);
 		vm_list[i] = NULL;
 	}
 

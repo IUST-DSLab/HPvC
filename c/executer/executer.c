@@ -185,7 +185,6 @@ void comm_actor(zsock_t *pipe, void *args) {
           IProgress *tp_progress;
           BSTR type, env;
           g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
-          printf("Before launch\n");
           rc = IMachine_LaunchVMProcess(tp_machine, tp_session, type, env, &tp_progress);
           if (FAILED(rc)) {
             err_exit("Failed to start vm.");
@@ -215,14 +214,22 @@ void comm_actor(zsock_t *pipe, void *args) {
           }
           /*ISession_UnlockMachine(tp_session);*/
 
-          char *smd = zstr_recv(listener);
+          /*char *smd = zstr_recv(listener);*/
+          char *smd;
+          int len;
+          zframe_t *frame = zframe_recv(listener);
+          len = zframe_size(frame);
+          smd = zframe_data(frame);
+          zframe_destroy(&frame);
+
           TeleportMetadata *md;
-          int len = strlen(smd);
-          /*printf(smd);*/
+          /*int len = strlen(smd);*/
           md = teleport_metadata__unpack(NULL, len, smd);
-          printf("VM Metadata arrived.\n");
-          printf("Home: %s\n", md->home);
-          zstr_free(&smd);
+          /*printf("VM Metadata arrived len %d.\n", len);*/
+          /*printf("%s\n------------\n", smd);*/
+          /*printf("Home: %s\n", md->home);*/
+          /*zstr_free(&smd);*/
+          /*free(smd);*/
 
           struct VMMetadata vm_md = {name: "fdr", home: md->home,
             n_history: md->n_history + 1, history: md->history,
@@ -234,8 +241,8 @@ void comm_actor(zsock_t *pipe, void *args) {
           if (metadatas_len % 5 == 0) {
             metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
           }
-          metadatas[len++] = vm_md;
-          printf("VM MD object home: %s\thistory_len: %d\n", vm_md.home, vm_md.n_history);
+          metadatas[metadatas_len++] = vm_md;
+          printf("VM MD object name: %s\thome: %s\thistory_len: %d\n", vm_md.name, vm_md.home, vm_md.n_history);
           int i = 0;
           for (i = 0; i <= md->n_history; i++) {
             printf("%s\n", md->history[i]);
@@ -283,6 +290,9 @@ void comm_actor(zsock_t *pipe, void *args) {
             log_err("Couldnt get console for session in teleport.\n");
           }
 
+          if (up) {
+            sleep(3);
+          }
           IProgress *progress;
           BSTR hostnameu, passu;
           g_pVBoxFuncs->pfnUtf8ToUtf16(target_ip, &hostnameu);
@@ -296,6 +306,21 @@ void comm_actor(zsock_t *pipe, void *args) {
           g_pVBoxFuncs->pfnUtf16Free(passu);
 
           IProgress_WaitForCompletion(progress, -1);
+          IProgress_get_ResultCode(progress, &rc);
+          if (FAILED(rc)) {
+            printf("Return code %x\n", rc);
+            IVirtualBoxErrorInfo *err;
+            IProgress_get_ErrorInfo(progress, &err);
+            if (err != NULL) {
+              BSTR textu;
+              char *text;
+              IVirtualBoxErrorInfo_get_Text(err, &textu);
+              g_pVBoxFuncs->pfnUtf16ToUtf8(textu, &text);
+              printf("Error: %s\n", text);
+              free(text);
+            }
+            err_exit("Teleport Failed\n");
+          }
 
           TeleportMetadata md = TELEPORT_METADATA__INIT;
           void *buf;

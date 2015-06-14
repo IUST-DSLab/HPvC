@@ -1,17 +1,17 @@
 message MachineMetric {
-  required string ip = 1;
-  required string uuid = 2;
-  required uint32 cpu = 3;
-  required float cpu_load_usage = 4;
-  required uint32 ram = 5;
-  required int32 ram_usage_total_average = 6;
+  optional string ip = 1;
+  optional string uuid = 2;
+  optional uint32 cpu = 3;
+  optional float cpu_load_usage = 4;
+  optional uint32 ram = 5;
+  optional int32 ram_usage_total_average = 6;
 }
 message HostMetric {
-  required string ip = 1;
-  required uint32 cpu = 2;
-  required int32 core_per_cpu = 3;
-  required float cpu_load_usage = 4;
-  required uint32 ram = 5;
-  required int32 ram_usage_total_average = 6;
+  optional string ip = 1;
+  optional uint32 cpu = 2;
+  optional int32 core_per_cpu = 3;
+  optional float cpu_load_usage = 4;
+  optional uint32 ram = 5;
+  optional int32 ram_usage_total_average = 6;
   repeated MachineMetric machines = 7;
 }

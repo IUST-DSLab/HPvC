@@ -1,4 +1,12 @@
+/**
+ * Copyright (c) 2015-2016. The DSLab HPC Team
+ * All rights reserved. 
+ * Developers: Aryan Baghi
+ * This is file we used to develop the monitor deamon 
+ * */
+
 #include "monitor.h"
+
 #include <czmq.h>
 #include "VBoxCAPIGlue.h"
 #include <unistd.h>
@@ -6,6 +14,9 @@
 #include <signal.h>
 #include "monitor.pb-c.h"
 
+
+/* This struct will use as link list
+to grap metrics data for each machine */
 typedef struct Machine
 {
   MachineMetric metrics;
@@ -15,25 +26,21 @@ typedef struct Machine
 IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
 IPerformanceCollector *pc = NULL;
-SAFEARRAY *metric_names = NULL;
-SAFEARRAY *objects = NULL;
-SAFEARRAY *units = NULL;
-SAFEARRAY *scales = NULL;
-SAFEARRAY *sequence_numbers = NULL;
-SAFEARRAY *indices = NULL;
-SAFEARRAY *length = NULL;
-SAFEARRAY *data = NULL;
+SAFEARRAY *metric_names = NULL,
+  *objects = NULL, *units = NULL,
+  *scales = NULL, *sequence_numbers = NULL,
+  *indices = NULL, *length = NULL, *data = NULL;
 
 zctx_t* context  = NULL;
 
-void err_exit(char *err);
-void log_err(char *err);
 void _setup_performance_metrics();
 void _setup_query_metrics();
 void _send_host_metrics();
 void _get_metrics(HostMetric *metrics);
 Machine *find_machine(Machine *machines, char *uuid);
 Machine *last_machine(Machine *machines);
+void err_exit(char *err);
+void log_err(char *err);
 
 
 int main(int argc, char *argv[]) {
@@ -62,6 +69,7 @@ int main(int argc, char *argv[]) {
     err_exit("Could not get PerformanceCollector refrence.");
   }
 
+  // Initialize out array needed for virtual box metrics
   metric_names = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
   objects = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
   units = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
@@ -71,18 +79,20 @@ int main(int argc, char *argv[]) {
   length = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
   data = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
     
+  // Setup metric we care about
   _setup_performance_metrics();  
 
   while(TRUE) {
     _setup_query_metrics();
     
+    // sleep for SLEEP_TIME and send metrics again
     sleep(SLEEP_TIME*6);
 
-    printf("Sending metrics ...\n");
+    // send metrics data to server
     _send_host_metrics();
-    printf("Sent!\n");
   }
 
+  // Destory out array we initialized in lines 70-78
   g_pVBoxFuncs->pfnSafeArrayDestroy(metric_names);
   g_pVBoxFuncs->pfnSafeArrayDestroy(objects);
   g_pVBoxFuncs->pfnSafeArrayDestroy(units);
@@ -92,40 +102,49 @@ int main(int argc, char *argv[]) {
   g_pVBoxFuncs->pfnSafeArrayDestroy(length);
   g_pVBoxFuncs->pfnSafeArrayDestroy(data);
 
-  
   zctx_destroy(&context);
 
   return 0;
 }
 
 
+/*
+This function will grab all metric we need
+and send it to server
+*/
 void _send_host_metrics() {
 
+  // Initialize HostMetric message contain all info about this host
   HostMetric metric = HOST_METRIC__INIT;
+  // Variable needed for protobuf
   unsigned char *buf;
   unsigned int len;
+
   HRESULT rc;
 
   void *request = zsocket_new(context, ZMQ_PUSH);
   zmsg_t *msg = zmsg_new ();
 
   signal(SIGINT, exit);
+  // Connect to server
   zsocket_connect(request, "tcp://localhost:5050");
 
+  // Get HostMetrics data
   _get_metrics(&metric); 
+  // Pack HostMetric data into buf
   len = host_metric__get_packed_size(&metric);
   buf = malloc(len);
-  printf("send start malloced\n");
   host_metric__pack(&metric, buf);
   
   if(zmsg_addmem(msg, buf, len) != 0){
     printf("error\n");
   }
 
-
+  // send message to server
   zmsg_send (&msg, request);
-
+  // free memory
   free(buf);
+  // TODO: destory and free metric (HostMetric)
   zmsg_destroy(&msg);
   zsocket_destroy(context, request);
 }
@@ -160,6 +179,8 @@ void _setup_query_metrics() {
 
   HRESULT rc;
 
+  /* set in metrics and in objects to empty array because we want all metrics for all objects
+  (Host and Guests)*/
   SAFEARRAY *in_metric_names = g_pVBoxFuncs->pfnSafeArrayCreateVector(VT_BSTR, 0, 0); // in
   SAFEARRAY *in_objects = g_pVBoxFuncs->pfnSafeArrayCreateVector(VT_UNKNOWN, 0, 0); // in
 
@@ -194,7 +215,6 @@ void _get_metrics(HostMetric *metrics) {
   ULONG data_length, metric_names_length, *_length, *_indices, *_scales, network_interfaces_length, machines_length = 0;
   IUnknown **_objects;
   void *machine = NULL;
-  // HostMetric metrics = HOST_METRIC__INIT; 
   IHostNetworkInterface **_network_interfaces = NULL;
   SAFEARRAY *network_interfaces = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
   Machine *machines = NULL, *found_machine = NULL;
@@ -287,21 +307,16 @@ void _get_metrics(HostMetric *metrics) {
     }
   }
 
-  printf("dddzzz\n");
-
   metrics->n_machines = machines_length;
   metrics->machines = (MachineMetric **) malloc(sizeof(MachineMetric *) * machines_length);
-  printf("%d\n", metrics->n_machines);
+
   for (i=0; i<metrics->n_machines; i++) {
     metrics->machines[i] = &machines->metrics;
     machines = machines->next;
   }
-  printf("HEEERR\n");
   int len = host_metric__get_packed_size(metrics);
-  printf("%d len", len);
   char* buf = malloc(len);
   host_metric__pack(metrics, buf);
-  printf("%s\n", buf);
   // for (i=0; i<metric_names_length; i++) {
   //   free(names[i]);
   // }
@@ -338,7 +353,7 @@ Machine *last_machine(Machine *machines) {
 
 void err_exit(char *err) {
   log_err(err);
-  exit(1);
+  _exit(1);
 }
 
 void log_err(char *err) {

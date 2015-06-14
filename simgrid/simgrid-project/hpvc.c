@@ -256,9 +256,10 @@ static int create_tasks(int argc, char* argv[])
 	int i = 0;
 	for (; i < number_of_processes; ++i)
 	{
-		arrival = rand() / RAND_MAX;
+		arrival = ((double)rand()) / RAND_MAX;
 		arrival = arrival == 1 ? arrival - 0.001 : arrival;
 		double sleep_time = -log(1 - arrival) / process_arrival_rate;
+		XBT_INFO("sleep for :%f", sleep_time);
 		MSG_process_sleep(sleep_time);
 
 		r = rand();

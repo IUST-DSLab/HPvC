@@ -61,31 +61,31 @@ static int process_task(int argc, char* argv[])
 
 	if (((double)(rand_task) / RAND_MAX) < 0.95)
 	{
-		r = r == 0 ? 10 : r;
+		r = r <= 10 ? 10 : r;
 		cpu_need = (RAND_MAX / (double)(r)) * 1e9;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
-		m = m == 0 ? 10 : m;
+		m = m <= 10 ? 10 : m;
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
-		c = c == 0? 10 : c;
-		msg_size = ((double)(c) / (double)(r)) * 4e6;		// The msg_size based on cpu_need
+		c = c <= 10? 10 : c;
+		msg_size = (RAND_MAX / (double)(c)) * 3.2e7;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
 		cpu_time = RAND_MAX / (double)(r);
-		expected_time = cpu_time + msg_size / 4e6;
+		expected_time = cpu_time + msg_size / 1.25e8;
 	}
 	else
 	{
-		r = r == 0 ? 10 : r;
+		r = r <= 10 ? 10 : r;
 		cpu_need = (RAND_MAX  / (double)(r)) * 1e10;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
-		m = m == 0 ? 10 : m;
+		m = m <= 10 ? 10 : m;
 		mem_need = (RAND_MAX / (double)(m)) * 1e5;		// MAX_MEM 0f each vm is 1e9
 
-		c = c == 0? 10 : c;
-		msg_size = ((double)(c) / (double)(r)) * 4e6;		// The msg_size based on cpu_need
+		c = c <= 10? 10 : c;
+		msg_size = ((double)(c) / (double)(r)) * 3.2e7;		// The msg_size based on cpu_need
 																	// 16e6 is bandwidth in byte/sec
 		cpu_time = 10 * (RAND_MAX / (double)(r));
-		expected_time = cpu_time  + msg_size / 4e6;
+		expected_time = cpu_time  + msg_size / 1.25e8;
 	}
 
 	XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d, cpu_time: %f, expected: %f\n",
@@ -112,7 +112,14 @@ static int process_task(int argc, char* argv[])
 
 	// TODO: Check if this time is not contribute to the real time
 	// It does not work. Get clock of sender and receiver and compare them
-	MSG_task_dsend(comm_task, target_mailbox_name, NULL);		
+	//MSG_task_dsend(comm_task, target_mailbox_name, NULL);		
+
+	int ret = MSG_OK;
+	while ((ret = MSG_task_send(comm_task, target_mailbox_name)) != MSG_OK)
+	{
+		XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
+				target_mailbox_name);
+	}
 
 	double real_finish_time = MSG_get_clock();
 
@@ -166,24 +173,26 @@ static int process_mailbox(int argc, char* argv[])
 	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
 	while (1)
 	{
-		irecv = MSG_task_irecv(&r_msg, mailbox_id);
-		int ret = MSG_comm_wait(irecv, -1); // see the doc
-
-		// it will see a goodbye meesage for termination
-		if (!ret)
+		int ret = MSG_OK;
+		while ((ret = MSG_task_receive(&r_msg, mailbox_id)) != MSG_OK)
 		{
-			unsigned int data_size = MSG_task_get_data_size(r_msg);
-			char* data = MSG_task_get_data(r_msg);
-			if (data != NULL)
-				if (!strncmp(data, "finish", data_size))
-				{
-					MSG_comm_destroy(irecv);
-					MSG_task_destroy(r_msg);
-					break;
-				}
-			MSG_comm_destroy(irecv);
-			MSG_task_destroy(r_msg);
+			//	irecv = MSG_task_irecv(&r_msg, mailbox_id);
+			//	int ret = MSG_comm_wait(irecv, -1); // see the doc
+			// it will see a goodbye meesage for termination
+			XBT_INFO("FAIL to receive on mailbox: %s\n", mailbox_id);
 		}
+
+		unsigned int data_size = MSG_task_get_data_size(r_msg);
+		char* data = MSG_task_get_data(r_msg);
+		if (data != NULL)
+			if (!strncmp(data, "finish", data_size))
+			{
+				//MSG_comm_destroy(irecv);
+				MSG_task_destroy(r_msg);
+				break;
+			}
+		//MSG_comm_destroy(irecv);
+		MSG_task_destroy(r_msg);
 	}
 
 	return 0;
@@ -192,7 +201,6 @@ static int process_mailbox(int argc, char* argv[])
 // It create and runs mailbox_processes for each vm within a cluster
 static void create_mailbox_processes()
 {
-
 	msg_vm_t vm = NULL;
 	// Loop over vm_list and create a mailbox_process for each vm
 	int cluster_id = 0;
@@ -365,8 +373,14 @@ static int get_finalize(int argc, char* argv[])
 			sprintf(vm_mailbox, "mailbox_%d_%d", cluster_id, i);
 			sprintf(fin_name, "finish_%d_%d", cluster_id, i);
 			fin_msg = MSG_task_create(fin_name, 0, 6, "finish");
-			MSG_task_dsend(fin_msg, vm_mailbox, NULL);
-			MSG_process_sleep(2);
+			//MSG_task_dsend(fin_msg, vm_mailbox, NULL);
+			int ret = MSG_OK;
+			while((ret = MSG_task_send(fin_msg, vm_mailbox)) != MSG_OK)
+			{
+				XBT_INFO("FAILURE in sending fin to VMs\n");
+			}
+
+			//MSG_process_sleep(2);
 		}
 	}
 

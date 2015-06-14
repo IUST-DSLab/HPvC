@@ -333,7 +333,11 @@ void comm_actor(zsock_t *pipe, void *args) {
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);
 
-          zstr_send(sender, buf);
+          /*printf("Sending md len %d\n", len);*/
+          /*printf("%s\n----------\n", buf);*/
+          zframe_t *frame = zframe_new(buf, len);
+          zframe_send(&frame, sender, 0);
+          /*zstr_send(sender, buf);*/
           free(buf);
         }
         zstr_free(&smsg);

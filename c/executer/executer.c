@@ -40,7 +40,6 @@ zactor_t *comm;
 
 int main(int argc, char *argv[]) {
 
-  ULONG revision = 0;
   HRESULT rc;
 
   // Initialize objects
@@ -139,6 +138,7 @@ void comm_actor(zsock_t *pipe, void *args) {
   if (!poller) err_exit("Poller was not created.\n");
 
   char *target_ip = malloc(20 * sizeof(char));
+  char *vm_name;
 
   bool terminated = false;
   while (!terminated) {
@@ -149,8 +149,13 @@ void comm_actor(zsock_t *pipe, void *args) {
         printf("%s\n", smsg);
         // Target teleport init
         if (*smsg == '1') {
+          // Get VM name
+          zsock_signal(listener, 0);
+          vm_name = zstr_recv(listener);
+
+          // Make VM ready for teleportation
           IMachine *tp_machine;
-          _find_machine("fdr", &tp_machine);
+          _find_machine(vm_name, &tp_machine);
           rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
           if (FAILED(rc) || !tp_session) {
             err_exit("Could not get Session reference for teleport.");
@@ -174,11 +179,12 @@ void comm_actor(zsock_t *pipe, void *args) {
           IMachine_Release(tp_machine);
           tp_machine = NULL;
 
+          // Start VM and wait for source
           rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
           if (FAILED(rc) || !tp_session) {
             err_exit("Could not get Session reference for teleport.");
           }
-          _find_machine("fdr", &tp_machine);
+          _find_machine(vm_name, &tp_machine);
           sleep(1);
           /*_start_vm(tp_machine, tp_session);*/
 
@@ -193,12 +199,14 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           sleep(3);
 
+          // Inform source to commence teleporting
           zstr_send(listener, "2");
 
+          // Wait for teleportation to end and check success
           IProgress_WaitForCompletion(tp_progress, -1);
-
-          IProgress_get_ResultCode(tp_progress, &rc);
-          if (FAILED(rc)) {
+          int rescode = -1;
+          IProgress_get_ResultCode(tp_progress, &rescode);
+          if (FAILED(rescode)) {
             printf("Return code %x\n", rc);
             IVirtualBoxErrorInfo *err;
             IProgress_get_ErrorInfo(tp_progress, &err);
@@ -214,30 +222,39 @@ void comm_actor(zsock_t *pipe, void *args) {
           }
           /*ISession_UnlockMachine(tp_session);*/
 
-          /*char *smd = zstr_recv(listener);*/
+          // Get VM metadatas
           char *smd;
           int len;
           zframe_t *frame = zframe_recv(listener);
           len = zframe_size(frame);
           smd = zframe_data(frame);
-          zframe_destroy(&frame);
+          /*zframe_print(frame, NULL);*/
+          if (!smd) {
+            log_err("SMD is empty\n");
+          }
 
           TeleportMetadata *md;
           /*int len = strlen(smd);*/
           md = teleport_metadata__unpack(NULL, len, smd);
+          if (md == NULL) {
+            log_err("MD is NULL.\n");
+          }
           /*printf("VM Metadata arrived len %d.\n", len);*/
           /*printf("%s\n------------\n", smd);*/
           /*printf("Home: %s\n", md->home);*/
           /*zstr_free(&smd);*/
           /*free(smd);*/
+          zframe_destroy(&frame);
 
-          struct VMMetadata vm_md = {name: "fdr", home: md->home,
+          struct VMMetadata vm_md = {name: vm_name, home: md->home,
             n_history: md->n_history + 1, history: md->history,
             session: tp_session,
           };
 
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
           vm_md.history[vm_md.n_history - 1] = TP_TARGET;
+
+          // Allocate more space for metadatas if already filled
           if (metadatas_len % 5 == 0) {
             metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
           }
@@ -255,21 +272,26 @@ void comm_actor(zsock_t *pipe, void *args) {
           // Source do teleport
           IMachine *tp_machine;
 
-          int i;
+          // Check to see if VM is already up
+          int i, md_index = -1;
           bool up = false;
+          printf("Before searching, len %d\n", metadatas_len);
           for (i = 0; i < metadatas_len; i++) {
-            if (metadatas[i].name == "fdr") {
+            if (streq(metadatas[i].name, vm_name)) {
+              printf("Found md, home %s\n", metadatas[i].home);
               tp_session = metadatas[i].session;
               up = true;
+              md_index = i;
             }
           }
+          // Start VM if not up
           if (!up) {
             rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
             if (FAILED(rc) || !tp_session) {
               err_exit("Could not get session for teleport.\n");
             }
 
-            _find_machine("fdr", &tp_machine);
+            _find_machine(vm_name, &tp_machine);
             sleep(1);
 
             IProgress *tp_progress;
@@ -284,6 +306,7 @@ void comm_actor(zsock_t *pipe, void *args) {
             IProgress_WaitForCompletion(tp_progress, -1);
           }
 
+          // Commence teleporting
           IConsole *tp_console;
           rc = ISession_get_Console(tp_session, &tp_console);
           if (FAILED(rc) || !tp_console) {
@@ -305,9 +328,11 @@ void comm_actor(zsock_t *pipe, void *args) {
           g_pVBoxFuncs->pfnUtf16Free(hostnameu);
           g_pVBoxFuncs->pfnUtf16Free(passu);
 
+          // Wait for teleport to finish and check result
           IProgress_WaitForCompletion(progress, -1);
-          IProgress_get_ResultCode(progress, &rc);
-          if (FAILED(rc)) {
+          int rescode = -1;
+          IProgress_get_ResultCode(progress, &rescode);
+          if (FAILED(rescode)) {
             printf("Return code %x\n", rc);
             IVirtualBoxErrorInfo *err;
             IProgress_get_ErrorInfo(progress, &err);
@@ -322,13 +347,21 @@ void comm_actor(zsock_t *pipe, void *args) {
             err_exit("Teleport Failed\n");
           }
 
+          // Send VM metadata
           TeleportMetadata md = TELEPORT_METADATA__INIT;
           void *buf;
           unsigned len;
-          md.home = "172.17";
-          md.n_history = 1;
-          md.history = malloc(md.n_history * sizeof(char*));
-          md.history[0] = host_ip;
+          if (md_index != -1) {
+            // Has previous metadata
+            md.home = metadatas[i].home;
+            md.n_history = metadatas[i].n_history;
+            md.history = metadatas[i].history;
+          } else {
+            md.home = host_ip;
+            md.n_history = 1;
+            md.history = malloc(md.n_history * sizeof(char*));
+            md.history[0] = host_ip;
+          }
           len = teleport_metadata__get_packed_size(&md);
           buf = malloc(len);
           teleport_metadata__pack(&md, buf);
@@ -358,13 +391,31 @@ void comm_actor(zsock_t *pipe, void *args) {
 
         oem = oemsg__unpack(NULL, len, smsg);
         if (oem->type == OEMSG__TYPE__TELEPORT) {
+          bool ok = true;
           target_ip = oem->teleport->target_ip;
-          char addr[50] = {0};
-          sprintf(addr, "tcp://%s:%d", target_ip, 23432);
-          printf("Teleport to: %s\n", addr);
-          sender = zsock_new_req(addr);
-          zstr_send(sender, "1");
-          zpoller_add(poller, sender);
+          if (streq(target_ip, "home")) {
+            ok = false;
+            int i;
+            for (i = 0; i < metadatas_len; i++) {
+              if (streq(metadatas[i].name, vm_name)) {
+                target_ip = metadatas[i].home;
+                ok = true;
+              }
+            }
+          }
+          if (ok) {
+            vm_name = oem->teleport->vm_name;
+            char addr[50] = {0};
+            sprintf(addr, "tcp://%s:%d", target_ip, 23432);
+            printf("Teleport to: %s\n", addr);
+            sender = zsock_new_req(addr);
+            zstr_send(sender, "1");
+            zsock_wait(sender);
+            zstr_send(sender, vm_name);
+            zpoller_add(poller, sender);
+          } else {
+            log_err("Problem in finding the ip.\n");
+          }
         }
 
         free(smsg);
@@ -396,7 +447,8 @@ void teleport(char *name, char *target) {
 
 char *get_host_ip(char *host) {
   struct ifaddrs *ifaddr, *ifa;
-  int family, s;
+  int s;
+  /*int family;*/
 
   if (getifaddrs(&ifaddr) == -1)
   {
@@ -418,11 +470,13 @@ char *get_host_ip(char *host) {
           printf("getnameinfo() failed: %s\n", gai_strerror(s));
           exit(EXIT_FAILURE);
       }
+      freeifaddrs(ifaddr);
       return host;
     }
   }
 
   freeifaddrs(ifaddr);
+  return NULL;
 }
 
 void log_err(char *err) {

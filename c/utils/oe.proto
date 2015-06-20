@@ -1,11 +1,19 @@
 message OEMsg {
-  enum Type { TELEPORT = 1; }
+  enum Type {
+    TELEPORT = 1;
+    START = 2;
+  }
   required Type type = 1;
 
   optional Teleport teleport = 2;
+  optional Start start = 3;
 }
 
 message Teleport {
   required string vm_name = 1;
   required string target_ip = 2;
+}
+
+message Start {
+  required string vm_name = 1;
 }

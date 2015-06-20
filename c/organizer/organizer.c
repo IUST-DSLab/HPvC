@@ -38,13 +38,45 @@ int main(int argc, char *argv[]) {
 
       /*printf(buf);*/
 
-      zstr_send(executer_sock, buf);
+      zframe_t *frame = zframe_new(buf, len);
+      zframe_send(&frame, executer_sock, 0);
+      /*zstr_send(executer_sock, buf);*/
       memset(buf, 0, len * (sizeof buf[0]));
       free(buf);
 
       char *smsg;
       smsg = zstr_recv(executer_sock);
       free(smsg);
+    } else if (streq(cmd, "start")) {
+      char name[50] = {0};
+      printf("Which? ");
+      scanf("%s", &name);
+
+      OEMsg oem = OEMSG__INIT;
+      Start sm = START__INIT;
+      void *buf;
+      unsigned len;
+
+      sm.vm_name = name;
+      oem.start = &sm;
+      oem.type = OEMSG__TYPE__START;
+      len = oemsg__get_packed_size(&oem);
+
+      buf = malloc(len);
+      oemsg__pack(&oem, buf);
+
+      /*printf(buf);*/
+
+      zframe_t *frame = zframe_new(buf, len);
+      zframe_send(&frame, executer_sock, 0);
+      /*zstr_send(executer_sock, buf);*/
+      memset(buf, 0, len * (sizeof buf[0]));
+      free(buf);
+
+      char *smsg;
+      smsg = zstr_recv(executer_sock);
+      free(smsg);
+
     } else if (streq(cmd, "exit")) {
       break;
     } else {

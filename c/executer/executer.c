@@ -18,14 +18,6 @@
 
 
 
-struct VMMetadata {
-  char *name;
-  char *home;
-  int n_history;
-  char **history;
-  ISession *session;
-};
-
 IVirtualBoxClient *vboxclient = NULL;
 IVirtualBox *vbox = NULL;
 ISession *session = NULL;
@@ -76,56 +68,63 @@ int main(int argc, char *argv[]) {
   zsock_t *organizer_sock = zsock_new_rep("tcp://127.0.0.1:98789");
   char *smsg;
   while (1) {
-    smsg = zstr_recv(organizer_sock);
+    /*smsg = zstr_recv(organizer_sock);*/
+    /*char *smsg;*/
+    int len;
+    zframe_t *frame = zframe_recv(organizer_sock);
+    len = zframe_size(frame);
+    smsg = zframe_data(frame);
+    /*zframe_print(frame, NULL);*/
+
     if (smsg == NULL) {
       break;
     }
 
     OEMsg *oem;
-    int len = strlen(smsg);
+    /*int len = strlen(smsg);*/
     if (!len) {
       log_err("Message rcvd from organizer empty.\n");
     }
 
+    /*printf("SMSG %s\n******%d\n", smsg, len);*/
     oem = oemsg__unpack(NULL, len, smsg);
+    /*printf("After sending ok \s \n", oem->start->vm_name);*/
     if (oem->type == OEMSG__TYPE__TELEPORT) {
       zstr_send(organizer_sock, "ok");
       zstr_send(comm, smsg);
+    } else {
+      zstr_send(organizer_sock, "ok");
+      char *vm_name = oem->start->vm_name;
+      ISession *tmp_session;
+      IMachine *tmp_machine;
+
+      rc = IVirtualBoxClient_get_Session(vboxclient, &tmp_session);
+      if (FAILED(rc) || !tmp_session) {
+        err_exit("Could not get Session reference for teleport.");
+      }
+      _find_machine(vm_name, &tmp_machine);
+      // Prevent SegFault, probably because of async works
+      sleep(1);
+      _start_vm(tmp_machine, tmp_session);
+
+      struct VMMetadata vm_md = {name: vm_name, home: host_ip,
+        n_history: 1, session: tmp_session, guest: false
+      };
+
+      vm_md.history = malloc(1 * sizeof(char*));
+      vm_md.history[0] = host_ip;
+      add_metadata(vm_md);
+
+      free(vm_name);
     }
 
-    zstr_free(&smsg);
+    /*free(smsg);*/
   }
 
   zsock_destroy(&organizer_sock);
 
-  /*sleep(60);*/
   free(host_ip);
   _exit(0);
-}
-
-void _find_machine(char *vmname, IMachine **machine) {
-  HRESULT rc;
-  BSTR vmname_utf16;
-  g_pVBoxFuncs->pfnUtf8ToUtf16(vmname, &vmname_utf16);
-  rc = IVirtualBox_FindMachine(vbox, vmname_utf16, machine);
-  if (FAILED(rc) | !machine) {
-    err_exit("Could not find machine.");
-  }
-  g_pVBoxFuncs->pfnUtf16Free(vmname_utf16);
-}
-
-void _start_vm(IMachine *machine, ISession *sess) {
-    IProgress *progress;
-    BSTR type, env;
-    HRESULT rc;
-    g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
-    rc = IMachine_LaunchVMProcess(machine, sess, type, env, &progress);
-    if (FAILED(rc)) {
-      err_exit("Failed to start vm.");
-    }
-    g_pVBoxFuncs->pfnUtf16Free(type);
-
-    IProgress_WaitForCompletion(progress, -1);
 }
 
 void comm_actor(zsock_t *pipe, void *args) {
@@ -151,11 +150,12 @@ void comm_actor(zsock_t *pipe, void *args) {
         if (*smsg == '1') {
           // Get VM name
           zsock_signal(listener, 0);
-          vm_name = zstr_recv(listener);
+          // Not shared variable to allow for multiple incoming
+          char *vm_name_l = zstr_recv(listener);
 
           // Make VM ready for teleportation
           IMachine *tp_machine;
-          _find_machine(vm_name, &tp_machine);
+          _find_machine(vm_name_l, &tp_machine);
           rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
           if (FAILED(rc) || !tp_session) {
             err_exit("Could not get Session reference for teleport.");
@@ -184,7 +184,8 @@ void comm_actor(zsock_t *pipe, void *args) {
           if (FAILED(rc) || !tp_session) {
             err_exit("Could not get Session reference for teleport.");
           }
-          _find_machine(vm_name, &tp_machine);
+          _find_machine(vm_name_l, &tp_machine);
+          // Prevent SegFault, probably because of async works
           sleep(1);
           /*_start_vm(tp_machine, tp_session);*/
 
@@ -246,9 +247,9 @@ void comm_actor(zsock_t *pipe, void *args) {
           /*free(smd);*/
           zframe_destroy(&frame);
 
-          struct VMMetadata vm_md = {name: vm_name, home: md->home,
+          struct VMMetadata vm_md = {name: vm_name_l, home: md->home,
             n_history: md->n_history + 1, history: md->history,
-            session: tp_session,
+            session: tp_session, guest: true
           };
 
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
@@ -284,6 +285,7 @@ void comm_actor(zsock_t *pipe, void *args) {
               md_index = i;
             }
           }
+
           // Start VM if not up
           if (!up) {
             rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
@@ -356,6 +358,8 @@ void comm_actor(zsock_t *pipe, void *args) {
             md.home = metadatas[i].home;
             md.n_history = metadatas[i].n_history;
             md.history = metadatas[i].history;
+            metadatas[i].state = vmstate_teleported;
+
           } else {
             md.home = host_ip;
             md.n_history = 1;
@@ -429,20 +433,60 @@ void comm_actor(zsock_t *pipe, void *args) {
   printf("%s\n", "Actor finished.");
 }
 
+void _find_machine(char *vmname, IMachine **machine) {
+  HRESULT rc;
+  BSTR vmname_utf16;
+  g_pVBoxFuncs->pfnUtf8ToUtf16(vmname, &vmname_utf16);
+  rc = IVirtualBox_FindMachine(vbox, vmname_utf16, machine);
+  if (FAILED(rc) | !machine) {
+    err_exit("Could not find machine.");
+  }
+  g_pVBoxFuncs->pfnUtf16Free(vmname_utf16);
+}
+
+void _start_vm(IMachine *machine, ISession *sess) {
+    IProgress *progress;
+    BSTR type, env;
+    HRESULT rc;
+    g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);
+    rc = IMachine_LaunchVMProcess(machine, sess, type, env, &progress);
+    if (FAILED(rc)) {
+      err_exit("Failed to start vm.");
+    }
+    g_pVBoxFuncs->pfnUtf16Free(type);
+
+    IProgress_WaitForCompletion(progress, -1);
+    int rescode = -1;
+    IProgress_get_ResultCode(progress, &rescode);
+    if (FAILED(rescode)) {
+      printf("Return code %x\n", rc);
+      IVirtualBoxErrorInfo *err;
+      IProgress_get_ErrorInfo(progress, &err);
+      if (err != NULL) {
+        BSTR textu;
+        char *text;
+        IVirtualBoxErrorInfo_get_Text(err, &textu);
+        g_pVBoxFuncs->pfnUtf16ToUtf8(textu, &text);
+        printf("Error: %s\n", text);
+        free(text);
+      }
+      err_exit("Teleport Failed\n");
+    }
+    /*ISession_UnlockMachine(tp_session);*/
+}
+
+void add_metadata(struct VMMetadata vm_md) {
+  if (metadatas_len % 5 == 0) {
+    metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
+  }
+  metadatas[metadatas_len++] = vm_md;
+}
+
 void start_vm(char *name) {
   // Find machine
   IMachine *machine;
   _find_machine(name, &machine);
   _start_vm(machine, session);
-}
-
-void teleport(char *name, char *target) {
-  char msg[50];
-  sprintf(msg, "1%s", target);
-  zstr_send(comm, msg);
-  char *st = zstr_recv(comm);
-  printf("%s\n", st);
-  free(st);
 }
 
 char *get_host_ip(char *host) {
@@ -508,28 +552,3 @@ void err_exit(char *err) {
   log_err(err);
   _exit(1);
 }
-
-/*int main(int argc, char *argv[]) {*/
-    /*// Start Machine*/
-    /*[>start_vm(machine);<]*/
-    /*IProgress *progress;*/
-    /*BSTR type, env;*/
-    /*g_pVBoxFuncs->pfnUtf8ToUtf16("gui", &type);*/
-    /*rc = IMachine_LaunchVMProcess(machine, session, type, env, &progress);*/
-    /*g_pVBoxFuncs->pfnUtf16Free(type);*/
-    /*sleep(20);*/
-
-    /*// Get console for machine*/
-    /*IConsole *console;*/
-    /*ISession_get_Console(session, &console);*/
-
-
-    /*// Teleport*/
-/*[>    BSTR hostnameu, passu;<]*/
-    /*[>g_pVBoxFuncs->pfnUtf8ToUtf16("192.168.1.102", &hostnameu);<]*/
-    /*[>g_pVBoxFuncs->pfnUtf8ToUtf16("123", &passu);<]*/
-    /*[>rc = IConsole_Teleport(console, hostnameu, 4884, passu, 500);<]*/
-    /*[>g_pVBoxFuncs->pfnUtf16Free(hostnameu);<]*/
-
-    /*_exit(0);*/
-/*}*/

@@ -324,9 +324,11 @@ void comm_actor(zsock_t *pipe, void *args) {
             log_err("Couldnt get console for session in teleport.\n");
           }
 
+          // To allow target's vm start
           if (up) {
             sleep(3);
           }
+
           IProgress *progress;
           BSTR hostnameu, passu;
           g_pVBoxFuncs->pfnUtf8ToUtf16(target_ip, &hostnameu);
@@ -364,10 +366,10 @@ void comm_actor(zsock_t *pipe, void *args) {
           unsigned len;
           if (md_index != -1) {
             // Has previous metadata
-            md.home = metadatas[i].home;
-            md.n_history = metadatas[i].n_history;
-            md.history = metadatas[i].history;
-            metadatas[i].state = vmstate_teleported;
+            md.home = metadatas[md_index].home;
+            md.n_history = metadatas[md_index].n_history;
+            md.history = metadatas[md_index].history;
+            metadatas[md_index].state = vmstate_teleported;
 
           } else {
             md.home = host_ip;

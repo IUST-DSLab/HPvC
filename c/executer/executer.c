@@ -306,6 +306,15 @@ void comm_actor(zsock_t *pipe, void *args) {
             g_pVBoxFuncs->pfnUtf16Free(type);
 
             IProgress_WaitForCompletion(tp_progress, -1);
+
+            // Create metadata and add it to list
+            struct VMMetadata vm_md = {name: vm_name, home: host_ip,
+              n_history: 1, session: tmp_session, guest: false
+            };
+
+            vm_md.history = malloc(1 * sizeof(char*));
+            vm_md.history[0] = host_ip;
+            add_metadata(vm_md);
           }
 
           // Commence teleporting

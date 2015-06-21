@@ -402,8 +402,10 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           ISession_Release(tp_session);
           tp_session = NULL;
-          IMachine_Release(tp_machine);
-          tp_machine = NULL;
+          if (!up) {
+            IMachine_Release(tp_machine);
+            tp_machine = NULL;
+          }
         }
         zstr_free(&smsg);
       } else {

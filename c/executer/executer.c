@@ -251,13 +251,9 @@ void comm_actor(zsock_t *pipe, void *args) {
           };
 
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
-          vm_md.history[vm_md.n_history - 1] = target_ip;
+          vm_md.history[vm_md.n_history - 1] = host_ip;
+          add_metadata(vm_md);
 
-          // Allocate more space for metadatas if already filled
-          if (metadatas_len % 5 == 0) {
-            metadatas = realloc(metadatas, (metadatas_len + 5) * sizeof(struct VMMetadata));
-          }
-          metadatas[metadatas_len++] = vm_md;
           printf("VM MD object name: %s\thome: %s\thistory_len: %d\n", vm_md.name, vm_md.home, vm_md.n_history);
           int i = 0;
           for (i = 0; i <= md->n_history; i++) {
@@ -403,6 +399,11 @@ void comm_actor(zsock_t *pipe, void *args) {
           zframe_send(&frame, sender, 0);
           /*zstr_send(sender, buf);*/
           free(buf);
+
+          ISession_Release(tp_session);
+          tp_session = NULL;
+          IMachine_Release(tp_machine);
+          tp_machine = NULL;
         }
         zstr_free(&smsg);
       } else {
@@ -421,6 +422,7 @@ void comm_actor(zsock_t *pipe, void *args) {
         }
 
         oem = oemsg__unpack(NULL, len, smsg);
+        vm_name = oem->teleport->vm_name;
         if (oem->type == OEMSG__TYPE__TELEPORT) {
           bool ok = true;
           target_ip = oem->teleport->target_ip;
@@ -435,7 +437,6 @@ void comm_actor(zsock_t *pipe, void *args) {
             }
           }
           if (ok) {
-            vm_name = oem->teleport->vm_name;
             char addr[50] = {0};
             sprintf(addr, "tcp://%s:%d", target_ip, 23432);
             printf("Teleport to: %s\n", addr);

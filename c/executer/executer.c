@@ -13,8 +13,6 @@
 
 #define TP_PASS "123"
 #define TP_PORT 23632
-#define TP_SOURCE "172.17.10.45"
-#define TP_TARGET "172.17.9.132"
 
 
 
@@ -253,7 +251,7 @@ void comm_actor(zsock_t *pipe, void *args) {
           };
 
           vm_md.history = realloc(vm_md.history, (vm_md.n_history) * sizeof(char*));
-          vm_md.history[vm_md.n_history - 1] = TP_TARGET;
+          vm_md.history[vm_md.n_history - 1] = target_ip;
 
           // Allocate more space for metadatas if already filled
           if (metadatas_len % 5 == 0) {
@@ -288,6 +286,24 @@ void comm_actor(zsock_t *pipe, void *args) {
 
           // Start VM if not up
           if (!up) {
+
+            // Turn teleporter off, just in case!
+            _find_machine(vm_name, &tp_machine);
+            rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
+            if (FAILED(rc) || !tp_session) {
+              err_exit("Could not get Session reference for teleport.");
+            }
+            IMachine_LockMachine(tp_machine, tp_session, LockType_Write);
+            ISession_get_Machine(tp_session, &tp_machine);
+            IMachine_SetTeleporterEnabled(tp_machine, false);
+            IMachine_SaveSettings(tp_machine);
+            ISession_UnlockMachine(tp_session);
+
+            ISession_Release(tp_session);
+            tp_session = NULL;
+            IMachine_Release(tp_machine);
+            tp_machine = NULL;
+
             rc = IVirtualBoxClient_get_Session(vboxclient, &tp_session);
             if (FAILED(rc) || !tp_session) {
               err_exit("Could not get session for teleport.\n");

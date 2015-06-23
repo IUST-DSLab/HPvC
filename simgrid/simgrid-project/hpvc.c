@@ -231,6 +231,59 @@ static void create_mailbox_processes()
 	return;
 }
 
+// This process tries to balance the load between VMs to achieve competitive ratio of O(logN).
+// It doe not know anything about how or where VMs are assigned. It uses opportunity cost approach
+// to assign newly arrived jobs and terminating jobs. It can be easily implemented distributed
+// as well.
+// So, it takes two type of message for load balancing, ARRIVING and TERMINATING. Because the tasks
+// do not change their requirements in the lifetime of process, it only reassigns on process
+// TERMINATION messages
+static int guest_load_balance(int argc, char* argv[])
+{
+	if (argc < 2)
+	{
+		XBT_INFO("guest load balancer: must be passed cluster_id\n");
+		return -1;
+	}
+
+	int cluster_id = atoi(argv[2]);
+	char load_balancer_mailbox[40];
+	sprintf(load_balancer_mailbox, "load_balancer_mailbox_%d", cluster_id);
+	
+	msg_task_t msg_req = NULL;
+	char request[20];
+
+	// Now it waits for receiving a message from create_tasks or get_finalize processes
+	// It then decide what which VM is better for the task to be created at.
+	// It also gets finalize message from get_finalize and terminate itself
+	// It does all communication synchronously.
+	while (1)
+	{
+		while (MSG_task_receive(&msg_req, load_balancer_mailbox) != MSG_OK)
+			XBT_INFO("load balancer %d hase failed to receive the load balancing request\n",
+					cluster_id);
+
+		// Retrieve the message request from data part and decide on what to do
+		MSG_task_get_data(msg_req);
+
+		// Execute assign algorithm
+		if (strncmp(request, "assign", 6))
+		{
+
+		}
+		// Execute reassign algorithm
+		else if (strncmp(request, "reassign", 8))
+		{
+
+		}
+
+		MSG_task_destroy(msg_req);
+		msg_req = NULL;
+	}
+
+	return 0;
+}
+
 // Creates tasks and applies them to a machine.
 // To be same for all executions, we must consider two separate clusters that the created tasks will submit in
 // the order.

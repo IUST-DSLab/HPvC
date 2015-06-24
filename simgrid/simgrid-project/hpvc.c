@@ -302,6 +302,7 @@ static int guest_load_balance(int argc, char* argv[])
 	int new_load = 0;
 	int vm_load = 0;
 	int selected_vm_number = 0;
+	int visited_vms = 0;
 	int cluster_id = atoi(argv[1]);
 	char load_balancer_mailbox[40];
 	sprintf(load_balancer_mailbox, "load_balancer_mailbox_%d", cluster_id);
@@ -334,8 +335,9 @@ static int guest_load_balance(int argc, char* argv[])
 		if (request->request == 0)
 		{
 			// TODO: Involve cpu speed
-			for (i = 0; i < number_of_vm; ++i)
+			for (i = selected_vm_number + 1, visited_vms = 0; visited_vms < number_of_vm; ++i, ++visited_vms)
 			{
+				i = i >= number_of_vm ? 0 : i;
 				vm = (msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], i);
 				mem_usage = *(double*)MSG_host_get_property_value(*vm, "mem");// TODO: check if they are int or double
 				net_usage = *(double*)MSG_host_get_property_value(*vm, "net");// TODO: check if they are int or double

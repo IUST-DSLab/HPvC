@@ -122,10 +122,10 @@ static int process_task(int argc, char* argv[])
 	resource_need need;
 	compute_resource_need(rand_task, r, m, c, &need);
 
-	XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d \
-			cpu_time: %f, expected: %f\n",
-			need.cpu, need.memory, need.net, cluster_id, home_vm, MSG_process_self_PID(), need.cpu_time,
-			need.expected_time);
+	//XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d \
+	//		cpu_time: %f, expected: %f\n",
+	//		need.cpu, need.memory, need.net, cluster_id, home_vm, MSG_process_self_PID(), need.cpu_time,
+	//		need.expected_time);
 
 	char exec_name[20];
 	char msg_name[20];
@@ -163,8 +163,8 @@ static int process_task(int argc, char* argv[])
 
 	double slowdown = actual_life_time / need.expected_time;
 
-	XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f, expected: %f\n",
-			MSG_process_self_PID(), cluster_id, slowdown, actual_life_time, need.expected_time);
+	//XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f, expected: %f\n",
+	//		MSG_process_self_PID(), cluster_id, slowdown, actual_life_time, need.expected_time);
 
 	((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], process_sequence))->
 		actual_time = actual_life_time;
@@ -179,6 +179,25 @@ static int process_task(int argc, char* argv[])
 	ret = MSG_OK;
 	while ((ret = MSG_task_send(fin_msg, fin_mailbox)) != MSG_OK)
 		XBT_INFO("fail to send fin message\n");
+
+
+	if (cluster_id == 0)
+	{
+		double* mem = (double*)malloc(sizeof(double));
+		*mem = - need.memory +
+			*(double*)MSG_host_get_property_value(MSG_process_get_host(MSG_process_self()), "mem");
+		MSG_host_set_property_value(MSG_process_get_host(MSG_process_self()),
+				"mem", (char*)mem, free_double);
+
+		double* net = (double*)malloc(sizeof(double));
+		*net = - need.net +
+			*(double*)MSG_host_get_property_value(MSG_process_get_host(MSG_process_self()), "net");
+		MSG_host_set_property_value(MSG_process_get_host(MSG_process_self()),
+				"net", (char*)net, free_double);
+
+	//	XBT_INFO("cluster_id: %d, vm: %d mem: %f, net: %f\n", cluster_id, home_vm,
+	//			*mem, *net);
+	}
 
 	return 0;
 }
@@ -280,6 +299,8 @@ static int guest_load_balance(int argc, char* argv[])
 	double mem_usage = 0;
 	double net_usage = 0;
 	msg_vm_t* vm = NULL;
+	int new_load = 0;
+	int vm_load = 0;
 	int selected_vm_number = 0;
 	int cluster_id = atoi(argv[1]);
 	char load_balancer_mailbox[40];
@@ -291,7 +312,7 @@ static int guest_load_balance(int argc, char* argv[])
 	msg_task_t msg_res = NULL;
 	char res_name[40];
 	char response_mailbox[20];
-	load_balance_response response;
+	load_balance_response* response = (load_balance_response*)malloc(sizeof(load_balance_response));
 
 	sprintf(response_mailbox, "create_%d", cluster_id);
 
@@ -318,30 +339,42 @@ static int guest_load_balance(int argc, char* argv[])
 				vm = (msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], i);
 				mem_usage = *(double*)MSG_host_get_property_value(*vm, "mem");// TODO: check if they are int or double
 				net_usage = *(double*)MSG_host_get_property_value(*vm, "net");// TODO: check if they are int or double
-				int vm_load = xbt_swag_size(MSG_host_get_process_list(*vm));
+				vm_load = xbt_swag_size(MSG_host_get_process_list(*vm));
 				// Compute marginal cost
-				marginal_cost = pow(number_of_vm,
-						((double)(vm_load + 1) / max_guest_job[cluster_id])) +
-							pow(number_of_vm, mem_usage + request->memory / MAX_VM_MEMORY) +
-							pow(number_of_vm, net_usage + request->net / MAX_VM_NET) -
-							pow(number_of_vm,
-									(double)(vm_load) / max_guest_job[cluster_id]) -
-							pow(number_of_vm, mem_usage) -
-							pow(number_of_vm, net_usage);
+				marginal_cost =
+							pow(number_of_vm, ((double)(vm_load + 1) / max_guest_job[cluster_id])) +
+							pow(number_of_vm, (mem_usage + request->memory) / MAX_VM_MEMORY) +
+							pow(number_of_vm, (net_usage + request->net) / MAX_VM_NET) -
+							pow(number_of_vm, (double)(vm_load) / max_guest_job[cluster_id]) -
+							pow(number_of_vm, mem_usage / MAX_VM_MEMORY) -
+							pow(number_of_vm, net_usage / MAX_VM_NET);
+
+				//XBT_INFO("marginal cost on cluster_id: %d on vm :%d for task: %d is %f\n",
+				//		cluster_id, i, request->task_number, marginal_cost);
 
 				if (marginal_cost < min_cost)
 				{
 					min_cost = marginal_cost;
+					//XBT_INFO("change selected vm:%d into vm:%d\n", selected_vm_number, i);
 					selected_vm_number = i;
+					new_load = vm_load + 1;
 				}
 			}
 			
-			response.target_host = selected_vm_number;
+			if (new_load >= max_guest_job[cluster_id])
+				max_guest_job[cluster_id]*= 2;
+
+		//	XBT_INFO("load balance on cluster %d , home %d for task %d marginal cost %f\n",
+		//			cluster_id, selected_vm_number, request->task_number, min_cost);
+			response->target_host = selected_vm_number;
 			sprintf(res_name, "res_%d_%d", cluster_id, request->task_number);
-			msg_res = MSG_task_create(res_name, 0, sizeof(response), &response);
+			msg_res = MSG_task_create(res_name, 0, sizeof(*response), response);
 			while (MSG_task_send(msg_res, response_mailbox) != MSG_OK)
 				XBT_INFO("Load Balancer has just failed to response the request for %d on %d",
 						request->task_number, cluster_id);
+			min_cost = DBL_MAX;
+			//selected_vm_number = 0;
+			new_load = 0;
 		}
 		// Execute reassign algorithm
 		else if (request->request == 1)
@@ -398,7 +431,7 @@ static int create_tasks(int argc, char* argv[])
 	msg_task_t msg_req = NULL;
 	char req_name[NUMBER_OF_CLUSTERS][40];
 	char load_balancer_mailbox[NUMBER_OF_CLUSTERS][40];
-	load_balance_request request;
+	load_balance_request* request = (load_balance_request*)malloc(sizeof(load_balance_request));
 	msg_task_t msg_res = NULL;
 	char response_mailbox[NUMBER_OF_CLUSTERS][20];
 	//load_balance_response* response = NULL;
@@ -425,15 +458,9 @@ static int create_tasks(int argc, char* argv[])
 		m = rand();
 		c = rand();
 		rand_task = rand();
-		//home_vm = rand();
 		target_mailbox = rand();
 
 		compute_resource_need(rand_task, r, m, c, &need);
-
-		request.memory = need.memory;
-		request.net = need.memory;
-		request.task_number = i;
-		request.request = 0;
 
 		for ( cluster_id = 0; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 		{
@@ -441,8 +468,14 @@ static int create_tasks(int argc, char* argv[])
 			if (cluster_id == 0)
 			{
 				rand();
+
+				request->memory = need.memory;
+				request->net = need.memory;
+				request->task_number = i;
+				request->request = 0;
+
 				sprintf(req_name[cluster_id], "load_balancing_%d_%d", cluster_id, i);
-				msg_req = MSG_task_create(req_name[cluster_id], 0, sizeof(request), &request);
+				msg_req = MSG_task_create(req_name[cluster_id], 0, sizeof(*request), request);
 
 				// Request-Response to load balancer
 				while (MSG_task_send(msg_req, load_balancer_mailbox[cluster_id]) != MSG_OK)
@@ -454,10 +487,12 @@ static int create_tasks(int argc, char* argv[])
 							i, cluster_id);
 
 				home_vm = ((load_balance_response*)MSG_task_get_data(msg_res))->target_host;
+				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
 			}
 			else
 			{
 				home_vm = rand() % number_of_vms;
+				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
 			}
 
 			char process_name[40];
@@ -494,16 +529,21 @@ static int create_tasks(int argc, char* argv[])
 			// TODO: Adding resource consumption to vm  property and make the laod balancer 
 			// robust against its null value
 
-			double* mem = (double*)malloc(sizeof(double));
-			*mem = need.memory + *(double*)MSG_host_get_property_value(host, "mem");
-			MSG_host_set_property_value(host, "mem", (char*)mem, free_double);
-
-			double* net = (double*)malloc(sizeof(double));
-			*net = need.net + *(double*)MSG_host_get_property_value(host, "net");
-			MSG_host_set_property_value(host, "net", (char*)net, free_double);
-
 			if (cluster_id == 0)
+			{
+				double* mem = (double*)malloc(sizeof(double));
+				*mem = need.memory + *(double*)MSG_host_get_property_value(host, "mem");
+				MSG_host_set_property_value(host, "mem", (char*)mem, free_double);
+
+				double* net = (double*)malloc(sizeof(double));
+				*net = need.net + *(double*)MSG_host_get_property_value(host, "net");
+				MSG_host_set_property_value(host, "net", (char*)net, free_double);
+
+				XBT_INFO("cluster_id: %d, vm: %d mem: %f, net: %f\n", cluster_id, home_vm,
+						*mem, *net);
+
 				MSG_task_destroy(msg_res);
+			}
 		}
 	}
 
@@ -692,8 +732,8 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 
 		slowdown = actual / expected;
 
-		printf("process: %d, slow down: %f, actual time: %f, expected time: %f\n",
-				i, slowdown, actual, expected);
+	//	printf("process: %d, slow down: %f, actual time: %f, expected time: %f\n",
+	//			i, slowdown, actual, expected);
 
 		mean_slowdown += slowdown;
 	}

@@ -60,6 +60,9 @@ static xbt_dynar_t hosts_dynar;
 static int number_of_involved_host; 
 static int total_cluster_host;
 
+static double cpu_max_flops;
+static double memory_max;
+static double net_max;
 
 // void_f_pvoid_t function to free double*
 void free_double(void* pointer)
@@ -72,30 +75,30 @@ static void compute_resource_need(int rand_task, int r, int m, int c, resource_n
 	if (((double)(rand_task) / RAND_MAX) < 0.95)
 	{
 		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * 1e9;		// Based on description of opportunity cost paper
+		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m <= 10 ? 10 : m;
-		need->memory = (double)(m) / (RAND_MAX) * 1e6;		// MAX_MEM 0f each vm is 1e9
+		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
 
 		c = c <= 10? 10 : c;
-		need->net = ((double)(c) / RAND_MAX) * 3.2e7;		// The msg_size based on cpu_need
+		need->net = ((double)(c) / RAND_MAX) * net_max;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
 		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
-		need->expected_time = need->cpu_time + need->net / 1.25e8;
+		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
 	else
 	{
 		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX  / (double)(r)) * 1e10;		// Based on description of opportunity cost paper
+		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 10;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m <= 10 ? 10 : m;
-		need->memory = (double)(m) / (RAND_MAX) * 1e6;		// MAX_MEM 0f each vm is 1e9
+		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
 
 		c = c <= 10? 10 : c;
-		need->net = ((double)(c) / RAND_MAX) * 3.2e7;		// The msg_size based on cpu_need
-																	// 16e6 is bandwidth in byte/sec
-		need->cpu_time = RAND_MAX / (double)(r);
-		need->expected_time = need->cpu_time + need->net / 1.25e8;
+		need->net = ((double)(c) / RAND_MAX) * net_max;		// The msg_size based on cpu_need
+																			// 16e6 is bandwidth in byte/sec
+		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
+		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
 }
 
@@ -541,8 +544,8 @@ static int create_tasks(int argc, char* argv[])
 				*net = need.net + *(double*)MSG_host_get_property_value(host, "net");
 				MSG_host_set_property_value(host, "net", (char*)net, free_double);
 
-				XBT_INFO("cluster_id: %d, vm: %d mem: %f, net: %f\n", cluster_id, home_vm,
-						*mem, *net);
+			//	XBT_INFO("cluster_id: %d, vm: %d mem: %f, net: %f\n", cluster_id, home_vm,
+			//			*mem, *net);
 
 				MSG_task_destroy(msg_res);
 			}
@@ -636,7 +639,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 	vm_list[cluster_id] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
 
 	// Number of VM per host
-	int vm_to_host = (NUMBER_OF_CLUSTERS * no_vm) / number_of_involved_host;
+	int vm_to_host = no_vm / number_of_involved_host;
 
 	// The last is the one who dose management for this step
 	int host = (cluster_id) * total_cluster_host;
@@ -646,13 +649,22 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 
 	char vm_name[20];
 
-	int j = 1;
+	long ramsize = 1L * 1000 * 1000 * 1000;
+	memory_max = ramsize / 1000;
+	net_max = MAX_VM_NET / vm_to_host;
+	// we currently assume one core per vm, so, number of vm per machine must be larger thatn number of cores
+//	cpu_max_flops = MSG_host_get_core_number(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0))) *
+//		MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0))) /
+//		vm_to_host;
+	cpu_max_flops = MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0)));
+
+	int j = 0;
 	for (i = 0; i < no_vm; ++i, ++j)
 	{
-		if (j / vm_to_host)
+		if (j >= vm_to_host)
 		{
 			++host;
-			j = 1;
+			j = 0;
 		}
 
 		pm = xbt_dynar_get_as(hosts_dynar, host, msg_host_t);
@@ -661,7 +673,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 
 		s_ws_params_t params;
 		memset(&params, 0, sizeof(params));
-		params.ramsize = 1L * 1000 * 1000 * 1000;
+		params.ramsize = ramsize;
 
 		msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
 		MSG_host_set_params(vm, &params);

@@ -61,7 +61,7 @@ make
 sudo make install
 ```
 
-VHPC uses protobuf for communication means. Therefore, the .proto files must be compiled beforehand.
+HPvC uses protobuf for communication means. Therefore, the .proto files must be compiled beforehand.
 
 ```bash
 cd utils

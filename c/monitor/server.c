@@ -1,6 +1,6 @@
 #include "server.h"
 #include "monitor.pb-c.h"
-#include <czmq.h>
+#include <zmq.h>
 #include <signal.h>
 #include <string.h>
 
@@ -10,7 +10,8 @@ typedef struct Host
   struct Host *next;
 } Host;
 
-int set_host_utility(zloop_t* loop, zmq_pollitem_t* item, void* socket);
+int response_to_api(zmq_msg_t *msg);
+int set_host_utility(zmq_msg_t *msg);
 void err_exit(char *err);
 void log_err(char *err);
 Host *find_host(Host *hosts, char *ip);
@@ -20,36 +21,63 @@ Host* hosts;
 
 int main(int argc, char *argv[]) {
 
-  zctx_t* context = zctx_new();
-  void* socket = zsocket_new(context, ZMQ_PULL);
-  zsocket_bind(socket, "tcp://*:5050");
+  pid_t pid;
+  // Context is thread safe!
+  void* context = zmq_ctx_new();
+  void* socket = zmq_socket(context, ZMQ_PULL);
+  zmq_bind(socket, "tcp://*:5050");
+  // API socket creation and binding
+  void* api_socket = zmq_socket(context, ZMQ_PULL);
+  zmq_bind(api_socket, "tcp://*:5051");
+
   signal(SIGINT, exit);
   printf("Starting server...\n");
 
+  zmq_pollitem_t polls[2];
+  polls[0].socket = socket;
+  polls[0].fd = 0;
+  polls[0].events = ZMQ_POLLIN;
+  polls[0].revents = 0;
 
-  zloop_t* loop = zloop_new();
+  polls[1].socket = api_socket;
+  polls[1].fd = 0;
+  polls[1].events = ZMQ_POLLIN;
+  polls[1].revents = 0;
   
-  zloop_set_verbose(loop, 1);
-  // zloop_timer(loop, 10000, 1, set_host_utility, NULL);
-
-  zmq_pollitem_t poll = {socket, 0, ZMQ_POLLIN};
-  zloop_poller(loop, &poll, set_host_utility, socket);
-
-  zloop_start(loop);
-  zloop_destroy(&loop);
-
-  zsocket_destroy(context, socket);
-  zctx_destroy(&context);
-
+  for(;;) {
+    zmq_msg_t msg;
+    int res =  zmq_poll(polls, 2, -1);
+    printf("first run\n");
+    if(polls[0].revents) {
+      zmq_msg_init(&msg);
+      zmq_msg_recv(&msg, socket, 0);
+      set_host_utility(&msg);
+      zmq_msg_close(&msg);
+    }
+    if(polls[1].revents > 0) {
+      zmq_msg_init(&msg);
+      zmq_msg_recv(&msg, api_socket, 0);
+      response_to_api(&msg);
+      zmq_msg_close(&msg);
+    }
+  }
+  zmq_close(api_socket);
+  zmq_close(socket);
+  zmq_ctx_destroy(context);
+  
   return 0;
 }
 
+int response_to_api(zmq_msg_t *msg) {
+  printf("message received\n");
+}
 
-int set_host_utility(zloop_t* loop, zmq_pollitem_t* item, void* socket) {
+int set_host_utility(zmq_msg_t *msg) {
+
   Host *host = NULL, *host_tmp = NULL;
-  zmsg_t *msg = zmsg_recv(socket);
-  unsigned int len = zmsg_content_size(msg);
-  unsigned char *packed_msg = (unsigned char *) zmsg_popstr(msg);
+  unsigned int len = zmq_msg_size(msg);
+  unsigned char *packed_msg = (unsigned char *) malloc(len+1);
+  memcpy(packed_msg, zmq_msg_data(msg), len);
 
   host = (Host *) malloc(sizeof(Host));
   host->metric = host_metric__unpack(NULL, len, packed_msg);

@@ -47,6 +47,11 @@ $ sudo yum install texlive-titlesec
 To install paje use the script  **paje_installer.sh**
 That could be find here: https://github.com/dosimont/paje_installer
 
+##How to Run Simulation
+```sh
+$./hpvc ../cluster.xml ../deployment.xml 480 15000 --cfg=contexts/stack_size:65536
+```
+
 ##License
 
 

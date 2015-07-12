@@ -23,6 +23,12 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 #define MAX_VM_MEMORY 1e9
 #define MAX_VM_NET 1.25e8
 
+typedef enum HOST_ASSIGN_POLICY
+{
+	INHAB_MIG = 0,
+	MIN_COMM
+}host_assign_policy;
+
 typedef struct slow_down_t
 {
 	double expected_time;
@@ -399,6 +405,49 @@ static int guest_load_balance(int argc, char* argv[])
 	return 0;
 }
 
+// TODO: Implement the reorganize according to communication overhead
+static int policy_func_min_comm()
+{
+	return 0;
+}
+
+static int policy_func_inhab_mig()
+{
+	return 0;
+}
+
+static int host_load_balance(int argc, char* argv[])
+{
+	if (argc < 3)
+	{
+		XBT_INFO("host load balancer: must be passed cluster_id assign policy\n");
+		return -1;
+	}
+
+	int cluster_id = atoi(argv[1]);
+	host_assign_policy policy = atoi(argv[2]);
+
+	// A loop that checks every K (default is 60) seconds, the load imbalance of hosts of cluster to make decision
+	// on reassignment based on the given policy.
+	// It will be terminated on receiving finish message perhaps!
+	while(1)
+	{
+		MSG_process_sleep(60);
+
+		switch (policy)
+		{
+			case INHAB_MIG:
+				break;
+			case MIN_COMM:
+				break;
+			default:
+				return -2;
+		};
+	}
+
+	return 0;
+}
+
 // Creates tasks and applies them to a machine.
 // To be same for all executions, we must consider two separate clusters that the created tasks will submit in
 // the order.
@@ -652,10 +701,6 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 	long ramsize = 1L * 1000 * 1000 * 1000;
 	memory_max = ramsize / 1000;
 	net_max = MAX_VM_NET / vm_to_host;
-	// we currently assume one core per vm, so, number of vm per machine must be larger thatn number of cores
-//	cpu_max_flops = MSG_host_get_core_number(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0))) *
-//		MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0))) /
-//		vm_to_host;
 	cpu_max_flops = MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0)));
 
 	int j = 0;
@@ -776,6 +821,7 @@ int main(int argc, char *argv[])
 	MSG_function_register("process_mailbox", process_mailbox);
 	MSG_function_register("get_finalize", get_finalize);
 	MSG_function_register("guest_load_balance", guest_load_balance);
+	MSG_function_register("host_load_balance", host_load_balance);
 
 	hosts_dynar = MSG_hosts_as_dynar();
 	number_of_involved_host = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS - 1;

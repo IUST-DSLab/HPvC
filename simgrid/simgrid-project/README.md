@@ -49,7 +49,7 @@ That could be find here: https://github.com/dosimont/paje_installer
 
 ##How to Run Simulation
 ```sh
-$./hpvc ../cluster.xml ../deployment.xml 480 15000 --cfg=contexts/stack_size:65536
+$./hpvc ../cluster.xml ../deployment.xml 480 2000 0 --cfg=contexts/stack_size:65536
 ```
 
 ##License

@@ -14,6 +14,6 @@
 <AS  id="AS0"  routing="Full">
   <cluster id="my_cluster_1" prefix="c-" suffix=""
   		radical="0-82"	power="1Gf" core="10"   bw="125MBps"     lat="50us"
-        bb_bw="4.5GBps" bb_lat="500us"/>
+        bb_bw="10GBps" bb_lat="500us"/>
 </AS>
 </platform>

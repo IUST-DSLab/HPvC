@@ -20,13 +20,18 @@
 XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example");
 
 #define NUMBER_OF_CLUSTERS 2
+// These must change if corresponding values changes in deployment.xml and cluster.xml
 #define MAX_VM_MEMORY 1e9
+#define MAX_PM_MEMORY 8e9
 #define MAX_VM_NET 1.25e8
+#define MAX_PM_NET 1.25e8
+#define MAX_VM_TO_PM 30		// It is related to number of vms we run on PMs.
 
 typedef enum HOST_ASSIGN_POLICY
 {
+	NONE = -1,
 	INHAB_MIG = 0,
-	MIN_COMM
+	MIN_COMM = 1
 }host_assign_policy;
 
 typedef struct slow_down_t
@@ -50,6 +55,18 @@ typedef struct LoadBalanceRequest
 	long double net;
 } load_balance_request;
 
+typedef struct VmPlacement
+{
+	int vm;
+	int target_pm;
+} vm_placement;
+
+typedef struct HostVmInfo
+{
+	int number_of_vms;
+	int vms_index[MAX_VM_TO_PM];
+} host_vm_info;
+
 typedef struct ResourceNeed
 {
 	double cpu;
@@ -61,6 +78,7 @@ typedef struct ResourceNeed
 
 static xbt_dynar_t vm_list[NUMBER_OF_CLUSTERS];
 static int max_guest_job[NUMBER_OF_CLUSTERS];
+static int max_pm_vm[NUMBER_OF_CLUSTERS];
 
 static xbt_dynar_t hosts_dynar;
 static int number_of_involved_host; 
@@ -70,10 +88,21 @@ static double cpu_max_flops;
 static double memory_max;
 static double net_max;
 
+static msg_sem_t finish_sem;
+static int finish;
+static int migration_count;
+static int migration_decision_count;
+
 // void_f_pvoid_t function to free double*
 void free_double(void* pointer)
 {
 	free((double*)pointer);
+}
+
+// void_f_pvoid_t finction to free host_vm_info*
+void free_host_vm_info(void* pointer)
+{
+	free((host_vm_info*)pointer);
 }
 
 static void compute_resource_need(int rand_task, int r, int m, int c, resource_need* need)
@@ -406,13 +435,171 @@ static int guest_load_balance(int argc, char* argv[])
 }
 
 // TODO: Implement the reorganize according to communication overhead
-static int policy_func_min_comm()
+static int policy_func_min_comm(int cluster_id)
 {
 	return 0;
 }
 
-static int policy_func_inhab_mig()
+// Place a VM and update the host_vm_info of the target pm
+static void place_vm(int cluster_id, vm_placement placement)
 {
+	msg_host_t host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, placement.target_pm));
+	host_vm_info pre_hvi = *(host_vm_info*)MSG_host_get_property_value(host, "host_vm_info");
+
+	// It can be logged if target has no further place for new vms
+	if (pre_hvi.number_of_vms >= MAX_VM_TO_PM)
+		return;
+
+	msg_vm_t vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], placement.vm));
+	MSG_vm_migrate(vm, host);
+
+	migration_count++;
+
+	// Update host info
+	host_vm_info* new_hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
+	memcpy(new_hvi, &pre_hvi, sizeof(host_vm_info));
+	new_hvi->vms_index[new_hvi->number_of_vms] = placement.target_pm;
+	new_hvi->number_of_vms++;
+
+	MSG_host_set_property_value(host, "host_vm_info", (char*)new_hvi, free_host_vm_info);
+
+	if (new_hvi->number_of_vms >= max_pm_vm[cluster_id])
+		max_pm_vm[cluster_id]++;		// TODO: Use "K" instead of "1"
+}
+
+/**
+ * It is based on the policy of evaluating cost of migration against cost inhabitancy to make decision
+ * on where to migrate VMs.
+ * It is based on opportunity cost model and takes into account the migration cost as a task with
+ * communication cost, memory and CPU overhead.
+ * It checks the stability condition of opportunity cost model and replace VMs to improve performance.
+ * */
+static int policy_func_inhab_mig(int cluster_id)
+{
+	int M = number_of_involved_host;
+	int m = 0, vm = 0, tvm = 0, k = 0;
+	vm_placement placement;
+	memset(&placement, -1, sizeof(placement));
+	double inhabitancy_cost = 0, migration_cost = 0;
+	double min_cost = DBL_MAX;
+
+	msg_vm_t current_vm = NULL;
+	msg_vm_t target_vm = NULL;
+	msg_host_t current_host = NULL;
+	msg_host_t target_host = NULL;
+	host_vm_info* hvi = NULL;
+	host_vm_info* thvi = NULL;
+
+	double pm_memory_usage = 0;
+	double pm_net_usage = 0;
+	int pm_load = 0;
+	double vm_memory_usage = 0;
+	double vm_net_usage = 0;
+	int vm_load = 0;
+	double tm_memory_usage = 0;
+	double tm_net_usage = 0;
+	int tm_load = 0;
+
+	// Find boundary of PMs in the cluster with cluster_id
+	int host = (cluster_id) * total_cluster_host;
+	M = host + number_of_involved_host;
+
+	while (1)
+	{
+		MSG_process_sleep(60);
+
+		MSG_sem_acquire(finish_sem);
+		if (finish)
+		{
+			MSG_sem_release(finish_sem);
+			break;
+		}
+
+		for (m = host; m < M; ++m)
+		{
+			current_host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, m));
+			hvi = (host_vm_info*)MSG_host_get_property_value(current_host, "host_vm_info");
+
+			// Initialize the PM load indices
+			pm_memory_usage = 0;
+			pm_net_usage = 0;
+			pm_load = 0;
+			for (vm = 0; vm < hvi->number_of_vms; ++vm)
+			{
+				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
+				pm_memory_usage += *(double*)MSG_host_get_property_value(current_vm, "mem");
+				pm_net_usage += *(double*)MSG_host_get_property_value(current_vm, "net");
+				pm_load += xbt_swag_size(MSG_host_get_process_list(current_vm));
+			}
+
+			for (vm = 0; vm < hvi->number_of_vms; ++vm)
+			{
+				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
+
+				vm_memory_usage = *(double*)MSG_host_get_property_value(current_vm, "mem");
+				vm_net_usage = *(double*)MSG_host_get_property_value(current_vm, "net");
+				vm_load = xbt_swag_size(MSG_host_get_process_list(current_vm));
+
+				inhabitancy_cost =
+					pow(number_of_involved_host, ((double)pm_load)/max_pm_vm[cluster_id]) +
+					pow(number_of_involved_host, pm_memory_usage/MAX_PM_MEMORY) +
+					pow(number_of_involved_host, pm_net_usage/MAX_PM_NET) -
+					pow(number_of_involved_host, ((double)(pm_load - vm_load))/max_pm_vm[cluster_id]) -
+					pow(number_of_involved_host, (pm_memory_usage - vm_memory_usage)/MAX_PM_MEMORY) -
+					pow(number_of_involved_host, (pm_net_usage - vm_memory_usage)/MAX_PM_NET);
+
+				for (k = host; k < M; ++k)		// TODO: Selecting from a small set
+				{
+					// Checking the condition based on other pms
+					if (k == m)	continue;
+
+					// Initialize the target PM load indices
+					target_host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, k));
+					thvi = (host_vm_info*)MSG_host_get_property_value(target_host, "host_vm_info");
+					tm_memory_usage = 0;
+					tm_net_usage = 0;
+					tm_load = 0;
+					for (tvm = 0; tvm < thvi->number_of_vms; ++tvm)
+					{
+						target_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], thvi->vms_index[tvm]));
+						tm_memory_usage += *(double*)MSG_host_get_property_value(target_vm, "mem");
+						tm_net_usage += *(double*)MSG_host_get_property_value(target_vm, "net");
+						tm_load += xbt_swag_size(MSG_host_get_process_list(target_vm));
+					}
+
+					migration_cost =
+						pow(number_of_involved_host, ((double)(tm_load + vm_load))/max_pm_vm[cluster_id]) +
+						pow(number_of_involved_host, (tm_memory_usage + vm_memory_usage)/MAX_PM_MEMORY) +
+						pow(number_of_involved_host, (tm_net_usage + vm_net_usage)/MAX_PM_NET) -
+						pow(number_of_involved_host, ((double)tm_load)/max_pm_vm[cluster_id]) -
+						pow(number_of_involved_host, tm_memory_usage/MAX_PM_MEMORY) -
+						pow(number_of_involved_host, tm_net_usage/MAX_PM_NET);
+
+					// comparing costs
+					if (migration_cost < inhabitancy_cost)
+					{
+						if (migration_cost < min_cost)
+						{
+							migration_decision_count++;
+							min_cost = migration_cost;
+							placement.vm = hvi->vms_index[vm];
+							placement.target_pm = k;
+						}
+					}
+				}
+			}
+
+			// A new placement is selected
+			if (placement.vm > -1 && placement.target_pm > -1)
+			{
+				place_vm(cluster_id, placement);
+				memset(&placement, -1, sizeof(vm_placement));
+			}
+		}
+
+		MSG_sem_release(finish_sem);
+	}
+
 	return 0;
 }
 
@@ -429,21 +616,30 @@ static int host_load_balance(int argc, char* argv[])
 
 	// A loop that checks every K (default is 60) seconds, the load imbalance of hosts of cluster to make decision
 	// on reassignment based on the given policy.
+	// The time of sleep is depends on estimated vm migration time.
 	// It will be terminated on receiving finish message perhaps!
-	while(1)
+	switch (policy)
 	{
-		MSG_process_sleep(60);
-
-		switch (policy)
-		{
-			case INHAB_MIG:
+		case NONE:
+			{
+				XBT_INFO("NO VM Replacement policy is enabled\n");
 				break;
-			case MIN_COMM:
+			}
+		case INHAB_MIG:
+			{
+				XBT_INFO("Calling Inhabitancy migration policy\n");
+				// Going to infinite loop
+				policy_func_inhab_mig(cluster_id);
 				break;
-			default:
-				return -2;
-		};
-	}
+			}
+		case MIN_COMM:
+			{
+				XBT_INFO("Calling Minimization Communication policy\n");
+				break;
+			}
+		default:
+			return -2;
+	};
 
 	return 0;
 }
@@ -669,15 +865,25 @@ static int get_finalize(int argc, char* argv[])
 	}
 
 	MSG_process_sleep(10);
+
+	MSG_sem_acquire(finish_sem);
+	finish = 1;
+	MSG_sem_release(finish_sem);
+
 	return 0;
 }
 
 // Put this two functions in a process to be sync with other parts
 // We assume that hosts are in a dynar based on their number and cluster declaration in cluster.xml
-static void launch_master(unsigned no_vm, int no_process, int cluster_id)
+static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_assign_policy policy)
 {
+	finish_sem = MSG_sem_init(1);
+	finish = 0;
+	migration_count = 0;
+	migration_decision_count = 0;
+
 	slow_down[cluster_id] = xbt_dynar_new(sizeof(SlowDown), NULL);
-	int i = 0;
+	int i = 0, j = 0;
 	for (; i < no_process; ++i)
 	{
 		SlowDown slow_down_process;
@@ -689,6 +895,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 
 	// Number of VM per host
 	int vm_to_host = no_vm / number_of_involved_host;
+	max_pm_vm[cluster_id] = vm_to_host + 1;
 
 	// The last is the one who dose management for this step
 	int host = (cluster_id) * total_cluster_host;
@@ -703,57 +910,80 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 	net_max = MAX_VM_NET / vm_to_host;
 	cpu_max_flops = MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0)));
 
-	int j = 0;
-	for (i = 0; i < no_vm; ++i, ++j)
+
+	for (j = 0; j < number_of_involved_host; j++)
 	{
-		if (j >= vm_to_host)
+		pm = xbt_dynar_get_as(hosts_dynar, j, msg_host_t);
+		host_vm_info* hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
+		memset(hvi, 0, sizeof(host_vm_info));
+
+		for (i = j * vm_to_host; i < (j + 1) * vm_to_host; ++i)
 		{
-			++host;
-			j = 0;
+			sprintf(vm_name, "vm_%d_%d", cluster_id, i);
+
+			s_ws_params_t params;
+			memset(&params, 0, sizeof(params));
+			params.ramsize = ramsize;
+
+			msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
+			MSG_host_set_params(vm, &params);
+
+			xbt_dynar_set(vm_list[cluster_id], i, &vm);
+
+			// TODO: check if need to do it with strings
+			double* mem = (double*)malloc(sizeof(double));
+			*mem = 0.0;
+			MSG_host_set_property_value(vm, "mem", (char*)mem, free_double);
+
+			double* net = (double*)malloc(sizeof(double));
+			*net = 0.0;
+			MSG_host_set_property_value(vm, "net", (char*)net, free_double);
+
+			hvi->vms_index[hvi->number_of_vms] = i;
+			hvi->number_of_vms++;
+
+			MSG_vm_start(vm);
 		}
-
-		pm = xbt_dynar_get_as(hosts_dynar, host, msg_host_t);
-
-		sprintf(vm_name, "vm_%d_%d", cluster_id, i);
-
-		s_ws_params_t params;
-		memset(&params, 0, sizeof(params));
-		params.ramsize = ramsize;
-
-		msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
-		MSG_host_set_params(vm, &params);
-
-		xbt_dynar_set(vm_list[cluster_id], i, &vm);
-
-		// TODO: check if need to do it with strings
-		double* mem = (double*)malloc(sizeof(double));
-		*mem = 0.0;
-		MSG_host_set_property_value(vm, "mem", (char*)mem, free_double);
-
-		double* net = (double*)malloc(sizeof(double));
-		*net = 0.0;
-		MSG_host_set_property_value(vm, "net", (char*)net, free_double);
-
-		MSG_vm_start(vm);
+		MSG_host_set_property_value(pm, "host_vm_info", (char*)hvi, free_host_vm_info);
 	}
 
 	if (cluster_id == 0)
 	{
-		int process_argc = 2;
-		char process_name[40];
-		char** process_argv = xbt_new(char*, 2);
-		sprintf(process_name, "load_balancer_%d", cluster_id);
-		process_argv[0] = xbt_new0(char, 40);
-		sprintf(process_argv[0], "%s", process_name);
-		process_argv[1] = xbt_new0(char, 40);
-		sprintf(process_argv[1], "%d", cluster_id);
-		msg_process_t load_balancer = MSG_process_create_with_arguments(process_name,
+		// Creating guest load balancer process
+		int glb_process_argc = 2;
+		char glb_process_name[40];
+		char** glb_process_argv = xbt_new(char*, 2);
+		sprintf(glb_process_name, "guest_load_balancer_%d", cluster_id);
+		glb_process_argv[0] = xbt_new0(char, 40);
+		sprintf(glb_process_argv[0], "%s", glb_process_name);
+		glb_process_argv[1] = xbt_new0(char, 40);
+		sprintf(glb_process_argv[1], "%d", cluster_id);
+		msg_process_t glb_load_balancer = MSG_process_create_with_arguments(glb_process_name,
 				guest_load_balance,
 				NULL,
-				xbt_dynar_get_as(hosts_dynar,
-					++host, msg_host_t),
-				process_argc,
-				process_argv);
+				xbt_dynar_get_as(hosts_dynar, host, msg_host_t),
+				glb_process_argc,
+				glb_process_argv);
+
+		// Creating host load balancer process
+		
+		int hlb_process_argc = 3;
+		char hlb_process_name[40];
+		char** hlb_process_argv = xbt_new(char*, 3);
+		sprintf(hlb_process_name, "host_load_balancer_%d", cluster_id);
+		hlb_process_argv[0] = xbt_new0(char, 40);
+		sprintf(hlb_process_argv[0], "%s", hlb_process_name);
+		hlb_process_argv[1] = xbt_new0(char, 40);
+		sprintf(hlb_process_argv[1], "%d", cluster_id);
+		hlb_process_argv[2] = xbt_new0(char, 40);
+		sprintf(hlb_process_argv[2], "%d", policy);
+		msg_process_t hlb_load_balancer = MSG_process_create_with_arguments(hlb_process_name,
+				host_load_balance,
+				NULL,
+				xbt_dynar_get_as(hosts_dynar, host, msg_host_t),
+				hlb_process_argc,
+				hlb_process_argv);
+
 	}
 }
 
@@ -799,6 +1029,8 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 
 	mean_slowdown/=no_process;
 	printf("cluster: %d slow down is : %f\n", cluster_id, mean_slowdown);
+	printf("number of migration is : %d\n", migration_count);
+	printf("number of migration decision: %d\n", migration_decision_count);
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);
@@ -808,9 +1040,9 @@ int main(int argc, char *argv[])
 {
 	msg_error_t res = MSG_OK;
 
-	if (argc < 5)
+	if (argc < 6)
 	{
-		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs per cluster> <number of processes>\n", argv[0]);
+		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs per cluster> <number of processes> <host assign policy>\n", argv[0]);
 		exit(1);
 	}
 	/* Argument checking */
@@ -832,7 +1064,7 @@ int main(int argc, char *argv[])
 	{
 		vm_list[i] = NULL;
 		max_guest_job[i] = 1;
-		launch_master(atoi(argv[3]), atoi(argv[4]), i);
+		launch_master(atoi(argv[3]), atoi(argv[4]), i, atoi(argv[5]));
 	}
 
 	MSG_launch_application(argv[2]);

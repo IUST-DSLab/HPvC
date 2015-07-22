@@ -1,2 +1,2 @@
 # HPvC
-HPvC
+High Performance Virtual Cluster (HPvC) is a New Distributed Computing Model in support of ExaScale computing that uses virtualization technology and its migration feature to achieve scalable high performance. It supports granularity at Virtual Machine and Process levels and collocates tightly coupled processes and virtual machines in a balance manner to near neighborhoods to reduce their communication overheads and also to increase the overall system performance.

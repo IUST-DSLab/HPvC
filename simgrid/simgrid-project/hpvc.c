@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include "msg/msg.h"            /* core library */
 #include "xbt/sysdep.h"         /* calloc */
@@ -25,7 +26,7 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 #define MAX_PM_MEMORY 8e9
 #define MAX_VM_NET 1.25e8
 #define MAX_PM_NET 1.25e8
-#define MAX_VM_TO_PM 30		// It is related to number of vms we run on PMs.
+#define MAX_VM_TO_PM 50		// It is related to number of vms we run on PMs.
 
 typedef enum HOST_ASSIGN_POLICY
 {
@@ -79,6 +80,9 @@ typedef struct ResourceNeed
 static xbt_dynar_t vm_list[NUMBER_OF_CLUSTERS];
 static int max_guest_job[NUMBER_OF_CLUSTERS];
 static int max_pm_vm[NUMBER_OF_CLUSTERS];
+static double mean_cpu_time;
+static double total_cpu_time;
+static double mean_arrival_time;
 
 static xbt_dynar_t hosts_dynar;
 static int number_of_involved_host; 
@@ -110,7 +114,7 @@ static void compute_resource_need(int rand_task, int r, int m, int c, resource_n
 	if (((double)(rand_task) / RAND_MAX) < 0.95)
 	{
 		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops;		// Based on description of opportunity cost paper
+		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 2;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m <= 10 ? 10 : m;
 		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
@@ -121,10 +125,10 @@ static void compute_resource_need(int rand_task, int r, int m, int c, resource_n
 		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
-	else
+	else 
 	{
 		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 10;		// Based on description of opportunity cost paper
+		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 20;		// Based on description of opportunity cost paper
 																// MAX_FLOPS = 1e9
 		m = m <= 10 ? 10 : m;
 		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
@@ -380,12 +384,14 @@ static int guest_load_balance(int argc, char* argv[])
 				mem_usage = *(double*)MSG_host_get_property_value(*vm, "mem");// TODO: check if they are int or double
 				net_usage = *(double*)MSG_host_get_property_value(*vm, "net");// TODO: check if they are int or double
 				vm_load = xbt_swag_size(MSG_host_get_process_list(*vm));
+
+				int ncpus = MSG_host_get_core_number(*vm);
 				// Compute marginal cost
 				marginal_cost =
-							pow(number_of_vm, ((double)(vm_load + 1) / max_guest_job[cluster_id])) +
+							pow(number_of_vm, ((double)(vm_load + 1) / (ncpus * max_guest_job[cluster_id]))) +
 							pow(number_of_vm, (mem_usage + request->memory) / MAX_VM_MEMORY) +
 							pow(number_of_vm, (net_usage + request->net) / MAX_VM_NET) -
-							pow(number_of_vm, (double)(vm_load) / max_guest_job[cluster_id]) -
+							pow(number_of_vm, (double)(vm_load) / (ncpus * max_guest_job[cluster_id])) -
 							pow(number_of_vm, mem_usage / MAX_VM_MEMORY) -
 							pow(number_of_vm, net_usage / MAX_VM_NET);
 
@@ -451,20 +457,31 @@ static void place_vm(int cluster_id, vm_placement placement)
 		return;
 
 	msg_vm_t vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], placement.vm));
+
+	// Getting previous host of migrant vm
+	msg_host_t pre_host = MSG_vm_get_pm(vm);
+
+	// Doing Migration *********************
 	MSG_vm_migrate(vm, host);
 
 	migration_count++;
 
-	// Update host info
+	// Update new host info
 	host_vm_info* new_hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
 	memcpy(new_hvi, &pre_hvi, sizeof(host_vm_info));
 	new_hvi->vms_index[new_hvi->number_of_vms] = placement.target_pm;
 	new_hvi->number_of_vms++;
-
 	MSG_host_set_property_value(host, "host_vm_info", (char*)new_hvi, free_host_vm_info);
 
+	// Update previous host info
+	host_vm_info pre_host_hvi = *(host_vm_info*)MSG_host_get_property_value(pre_host, "host_vm_info");
+	host_vm_info* pre_host_new_hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
+	memcpy(pre_host_new_hvi, &pre_host_hvi, sizeof(host_vm_info));
+	pre_host_new_hvi->number_of_vms--;
+	MSG_host_set_property_value(pre_host, "host_vm_info", (char*)pre_host_new_hvi, free_host_vm_info);
+
 	if (new_hvi->number_of_vms >= max_pm_vm[cluster_id])
-		max_pm_vm[cluster_id]++;		// TODO: Use "K" instead of "1"
+		max_pm_vm[cluster_id] *= 2;		// TODO: Use "K" instead of "1"
 }
 
 /**
@@ -506,7 +523,7 @@ static int policy_func_inhab_mig(int cluster_id)
 
 	while (1)
 	{
-		MSG_process_sleep(60);
+		MSG_process_sleep(10);		// TODO: It can be adjust to arrival rate or process lifetime
 
 		MSG_sem_acquire(finish_sem);
 		if (finish)
@@ -520,6 +537,7 @@ static int policy_func_inhab_mig(int cluster_id)
 			current_host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, m));
 			hvi = (host_vm_info*)MSG_host_get_property_value(current_host, "host_vm_info");
 
+			int ncpus_host = MSG_host_get_core_number(current_host);
 			// Initialize the PM load indices
 			pm_memory_usage = 0;
 			pm_net_usage = 0;
@@ -527,26 +545,29 @@ static int policy_func_inhab_mig(int cluster_id)
 			for (vm = 0; vm < hvi->number_of_vms; ++vm)
 			{
 				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
+				int ncpus = MSG_host_get_core_number(current_vm);
 				pm_memory_usage += *(double*)MSG_host_get_property_value(current_vm, "mem");
 				pm_net_usage += *(double*)MSG_host_get_property_value(current_vm, "net");
-				pm_load += xbt_swag_size(MSG_host_get_process_list(current_vm));
+				pm_load += xbt_swag_size(MSG_host_get_process_list(current_vm)) / (double)ncpus;
 			}
 
+			int done_migration = 0;
 			for (vm = 0; vm < hvi->number_of_vms; ++vm)
 			{
 				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
-
+				//int ncpus = MSG_host_get_core_number(current_vm);
 				vm_memory_usage = *(double*)MSG_host_get_property_value(current_vm, "mem");
 				vm_net_usage = *(double*)MSG_host_get_property_value(current_vm, "net");
+				//vm_load = xbt_swag_size(MSG_host_get_process_list(current_vm)) / (double)ncpus;
 				vm_load = xbt_swag_size(MSG_host_get_process_list(current_vm));
 
 				inhabitancy_cost =
-					pow(number_of_involved_host, ((double)pm_load)/max_pm_vm[cluster_id]) +
-					pow(number_of_involved_host, pm_memory_usage/MAX_PM_MEMORY) +
+					pow(number_of_involved_host, ((double)pm_load)/(max_pm_vm[cluster_id] * ncpus_host)) +
+					//pow(number_of_involved_host, pm_memory_usage/MAX_PM_MEMORY) +
 					pow(number_of_involved_host, pm_net_usage/MAX_PM_NET) -
-					pow(number_of_involved_host, ((double)(pm_load - vm_load))/max_pm_vm[cluster_id]) -
-					pow(number_of_involved_host, (pm_memory_usage - vm_memory_usage)/MAX_PM_MEMORY) -
-					pow(number_of_involved_host, (pm_net_usage - vm_memory_usage)/MAX_PM_NET);
+					pow(number_of_involved_host, ((double)(pm_load - vm_load))/(max_pm_vm[cluster_id] * ncpus_host)) -
+					//pow(number_of_involved_host, (pm_memory_usage - vm_memory_usage)/MAX_PM_MEMORY) -
+					pow(number_of_involved_host, (pm_net_usage - vm_net_usage)/MAX_PM_NET);
 
 				for (k = host; k < M; ++k)		// TODO: Selecting from a small set
 				{
@@ -556,45 +577,56 @@ static int policy_func_inhab_mig(int cluster_id)
 					// Initialize the target PM load indices
 					target_host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, k));
 					thvi = (host_vm_info*)MSG_host_get_property_value(target_host, "host_vm_info");
+					int tncpus = MSG_host_get_core_number(target_host);
 					tm_memory_usage = 0;
 					tm_net_usage = 0;
 					tm_load = 0;
 					for (tvm = 0; tvm < thvi->number_of_vms; ++tvm)
 					{
 						target_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], thvi->vms_index[tvm]));
+						//int tncpus = MSG_host_get_core_number(current_vm);
 						tm_memory_usage += *(double*)MSG_host_get_property_value(target_vm, "mem");
 						tm_net_usage += *(double*)MSG_host_get_property_value(target_vm, "net");
+						//tm_load += xbt_swag_size(MSG_host_get_process_list(target_vm)) / (double)tncpus;
 						tm_load += xbt_swag_size(MSG_host_get_process_list(target_vm));
 					}
 
 					migration_cost =
-						pow(number_of_involved_host, ((double)(tm_load + vm_load))/max_pm_vm[cluster_id]) +
-						pow(number_of_involved_host, (tm_memory_usage + vm_memory_usage)/MAX_PM_MEMORY) +
+						pow(number_of_involved_host, ((double)(tm_load + vm_load))/(max_pm_vm[cluster_id] * tncpus)) +
+						//pow(number_of_involved_host, (tm_memory_usage + vm_memory_usage)/MAX_PM_MEMORY) +
 						pow(number_of_involved_host, (tm_net_usage + vm_net_usage)/MAX_PM_NET) -
-						pow(number_of_involved_host, ((double)tm_load)/max_pm_vm[cluster_id]) -
-						pow(number_of_involved_host, tm_memory_usage/MAX_PM_MEMORY) -
+						pow(number_of_involved_host, ((double)tm_load)/(max_pm_vm[cluster_id] * tncpus)) -
+						//pow(number_of_involved_host, tm_memory_usage/MAX_PM_MEMORY) -
 						pow(number_of_involved_host, tm_net_usage/MAX_PM_NET);
 
 					// comparing costs
-					if (migration_cost < inhabitancy_cost)
+					if (migration_cost <= inhabitancy_cost / 2)
+					//if (migration_cost < inhabitancy_cost)
 					{
-						if (migration_cost < min_cost)
-						{
+					//	if (migration_cost < min_cost)
+					//	{
 							migration_decision_count++;
-							min_cost = migration_cost;
+					//		min_cost = migration_cost;
 							placement.vm = hvi->vms_index[vm];
 							placement.target_pm = k;
-						}
+							place_vm(cluster_id, placement);
+							memset(&placement, -1, sizeof(vm_placement));
+							done_migration = 1;
+							break;
+					//	}
 					}
 				}
+
+				if (done_migration)
+					break;
 			}
 
 			// A new placement is selected
-			if (placement.vm > -1 && placement.target_pm > -1)
-			{
-				place_vm(cluster_id, placement);
-				memset(&placement, -1, sizeof(vm_placement));
-			}
+		//	if (placement.vm > -1 && placement.target_pm > -1)
+		//	{
+		//		place_vm(cluster_id, placement);
+		//		memset(&placement, -1, sizeof(vm_placement));
+		//	}
 		}
 
 		MSG_sem_release(finish_sem);
@@ -699,25 +731,35 @@ static int create_tasks(int argc, char* argv[])
 	int i = 0;
 	for (; i < number_of_processes; ++i)
 	{
-		arrival = ((double)rand()) / RAND_MAX;
-		arrival = arrival == 1 ? arrival - 0.005 : arrival;
-		double sleep_time = -log(1 - arrival) / process_arrival_rate;
-		MSG_process_sleep(sleep_time);
+	//	if ( i % (20 % (number_of_processes / 20)) == 0)
+	//	{
+			arrival = ((double)rand()) / RAND_MAX;
+			arrival = arrival == 1 ? arrival - 0.005 : arrival;
+			double sleep_time = -log(1 - arrival) / process_arrival_rate;
+			mean_arrival_time += sleep_time / number_of_processes;
+			MSG_process_sleep(sleep_time);
+	//	}
 
 		r = rand();
+		srand(r);
 		m = rand();
+		srand(m);
 		c = rand();
+		srand(c);
 		rand_task = rand();
+		srand(rand_task);
 		target_mailbox = rand();
 
 		compute_resource_need(rand_task, r, m, c, &need);
+		mean_cpu_time += (need.cpu / cpu_max_flops) / number_of_processes;
+		total_cpu_time += need.cpu / cpu_max_flops;
 
 		for ( cluster_id = 0; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
 		{
 			// Only first cluster does load balance
 			if (cluster_id == 0)
 			{
-				rand();
+				//rand();
 
 				request->memory = need.memory;
 				request->net = need.memory;
@@ -741,7 +783,8 @@ static int create_tasks(int argc, char* argv[])
 			}
 			else
 			{
-				home_vm = rand() % number_of_vms;
+				home_vm = i % number_of_vms;		// Round-Robin
+				//home_vm = rand() % number_of_vms;
 				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
 			}
 
@@ -875,7 +918,7 @@ static int get_finalize(int argc, char* argv[])
 
 // Put this two functions in a process to be sync with other parts
 // We assume that hosts are in a dynar based on their number and cluster declaration in cluster.xml
-static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_assign_policy policy)
+static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_assign_policy policy, int random)
 {
 	finish_sem = MSG_sem_init(1);
 	finish = 0;
@@ -883,7 +926,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_a
 	migration_decision_count = 0;
 
 	slow_down[cluster_id] = xbt_dynar_new(sizeof(SlowDown), NULL);
-	int i = 0, j = 0;
+	int i = 0, j = 0, k = 0;
 	for (; i < no_process; ++i)
 	{
 		SlowDown slow_down_process;
@@ -905,25 +948,27 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_a
 
 	char vm_name[20];
 
-	long ramsize = 1L * 1000 * 1000 * 1000;
-	memory_max = ramsize / 1000;
+	long ramsize = 1L * 256 * 1000 * 1000;
+	memory_max = ramsize / 10000;
 	net_max = MAX_VM_NET / vm_to_host;
 	cpu_max_flops = MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0)));
 
 
-	for (j = 0; j < number_of_involved_host; j++)
+	for (j = host; j < host + number_of_involved_host; j++, k++)
 	{
 		pm = xbt_dynar_get_as(hosts_dynar, j, msg_host_t);
 		host_vm_info* hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
 		memset(hvi, 0, sizeof(host_vm_info));
 
-		for (i = j * vm_to_host; i < (j + 1) * vm_to_host; ++i)
+		for (i = k * vm_to_host; i < (k + 1) * vm_to_host && i < no_vm; ++i)
 		{
 			sprintf(vm_name, "vm_%d_%d", cluster_id, i);
 
 			s_ws_params_t params;
 			memset(&params, 0, sizeof(params));
 			params.ramsize = ramsize;
+		//	if (i % (no_vm / 50) == random)
+		//		params.ncpus = 4;
 
 			msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
 			MSG_host_set_params(vm, &params);
@@ -1031,6 +1076,8 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 	printf("cluster: %d slow down is : %f\n", cluster_id, mean_slowdown);
 	printf("number of migration is : %d\n", migration_count);
 	printf("number of migration decision: %d\n", migration_decision_count);
+	printf("mean cpu time need: %f, total cpu time: %f, mean_arrival_time: %f\n",
+			mean_cpu_time, total_cpu_time, mean_arrival_time);
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);
@@ -1058,13 +1105,19 @@ int main(int argc, char *argv[])
 	hosts_dynar = MSG_hosts_as_dynar();
 	number_of_involved_host = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS - 1;
 	total_cluster_host = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS;
+	mean_cpu_time = 0;
+	total_cpu_time = 0;
+	mean_arrival_time = 0;
+
+	srand(time(NULL));
+	int random = rand() % (atoi(argv[3]) / 50);
 
 	int i = 0;
 	for (; i < NUMBER_OF_CLUSTERS; ++i)
 	{
 		vm_list[i] = NULL;
 		max_guest_job[i] = 1;
-		launch_master(atoi(argv[3]), atoi(argv[4]), i, atoi(argv[5]));
+		launch_master(atoi(argv[3]), atoi(argv[4]), i, atoi(argv[5]), random);
 	}
 
 	MSG_launch_application(argv[2]);

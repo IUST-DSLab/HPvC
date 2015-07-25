@@ -1,14 +1,14 @@
 <?xml version='1.0'?>
 <!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd">
 <platform version="3">
-	<process host="c-82" function="create_tasks">
-		<argument value="2000"/>		<!-- number_of_processes -->
-		<argument value="276545"/>		<!-- time_seed -->
-		<argument value="480"/>			<!-- number_of_vms -->
+	<process host="c-26" function="create_tasks">
+		<argument value="10000"/>		<!-- number_of_processes = number_of_vms * 50 -->
+		<argument value="66665"/>		<!-- time_seed -->
+		<argument value="252"/>			<!-- number_of_vms -->
 		<argument value="0.1"/>			<!-- process_arrival_rate -->
 	</process>
-	<process host="c-82" function="get_finalize">
-		<argument value="2000"/>		<!-- number_of_processes -->
-		<argument value="480"/>			<!-- number_of_vms -->
+	<process host="c-26" function="get_finalize">
+		<argument value="10000"/>		<!-- number_of_processes = number_of_vms * 50 -->
+		<argument value="252"/>			<!-- number_of_vms -->
 	</process>
 </platform>

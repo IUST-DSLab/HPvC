@@ -3,7 +3,7 @@
 <platform version="3">
 	<process host="c-26" function="create_tasks">
 		<argument value="4000"/>		<!-- number_of_processes = number_of_vms * 50 -->
-		<argument value="958"/>		<!-- time_seed -->
+		<argument value="9222"/>		<!-- time_seed -->
 		<argument value="252"/>			<!-- number_of_vms -->
 		<argument value="2"/>			<!-- process_arrival_rate -->
 	</process>

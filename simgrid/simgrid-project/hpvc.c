@@ -109,36 +109,64 @@ void free_host_vm_info(void* pointer)
 	free((host_vm_info*)pointer);
 }
 
-static void compute_resource_need(int rand_task, int r, int m, int c, resource_need* need)
+static void compute_resource_need(double rand_task, double r, double m, double c, resource_need* need)
 {
-	if (((double)(rand_task) / RAND_MAX) < 0.95)
+	if (rand_task < 0.75)
 	{
-		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 2;		// Based on description of opportunity cost paper
-																// MAX_FLOPS = 1e9
-		m = m <= 10 ? 10 : m;
-		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
+		r = r < 0.00001? 0.00001 : r;
+		need->cpu = 2 / r * cpu_max_flops;
 
-		c = c <= 10? 10 : c;
-		need->net = ((double)(c) / RAND_MAX) * net_max;		// The msg_size based on cpu_need
-																			// 16e6 is bandwidth in byte/sec
-		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
+		m = m <= 0.1 ? 0.1 : m;
+		need->memory = 1 / m * memory_max;
+
+		c = c <= 0.1? 0.1 : c;
+		need->net = 1 / c * net_max;
+
+		need->cpu_time = 2 / r;
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
 	else 
 	{
-		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 20;		// Based on description of opportunity cost paper
-																// MAX_FLOPS = 1e9
-		m = m <= 10 ? 10 : m;
-		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
+		r = r < 0.00001? 0.00001 : r;
+		need->cpu = 20 / r * cpu_max_flops;
 
-		c = c <= 10? 10 : c;
-		need->net = ((double)(c) / RAND_MAX) * net_max;		// The msg_size based on cpu_need
-																			// 16e6 is bandwidth in byte/sec
-		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
+		m = m <= 0.1 ? 0.1 : m;
+		need->memory = 1 / m * memory_max;
+
+		c = c <= 0.1? 0.1 : c;
+		need->net = 1 / c * net_max;
+
+		need->cpu_time = 20 / r;
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
+//	if (((double)(rand_task) / RAND_MAX) < 0.8)
+//	{
+//		r = r < RAND_MAX / 100000 ? RAND_MAX / 100000 : r * 2;
+//		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops;
+//
+//		m = m <= 10 ? 10 : m;
+//		need->memory = (double)(m) / (RAND_MAX) * memory_max;
+//
+//		c = c <= 10? 10 : c;
+//		need->net = ((double)(c) / RAND_MAX) * net_max;
+//
+//		need->cpu_time = RAND_MAX / (double)(r);
+//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
+//	}
+//	else 
+//	{
+//		r = r < RAND_MAX / 100000 ? RAND_MAX / 100000 : r;
+//		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 20;
+//
+//		m = m <= 10 ? 10 : m;
+//		need->memory = (double)(m) / (RAND_MAX) * memory_max;
+//
+//		c = c <= 10? 10 : c;
+//		need->net = ((double)(c) / RAND_MAX) * net_max;	
+//
+//		need->cpu_time = RAND_MAX / (double)(r) * 20;
+//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
+//	}
 }
 
 // Create process and a task with the passing parameters of CPU, Memory and communication.
@@ -152,22 +180,17 @@ static int process_task(int argc, char* argv[])
 		return -1;
 	}
 
-	unsigned int r = atoi(argv[1]);
-	unsigned int m = atoi(argv[2]);
-	unsigned int c = atoi(argv[3]);
-	unsigned int rand_task = atoi(argv[4]);
-	unsigned int home_vm = atoi(argv[5]);
+	double r = atof(argv[1]);
+	double m = atof(argv[2]);
+	double c = atof(argv[3]);
+	double rand_task = atof(argv[4]);
 	unsigned int target_mailbox = atoi(argv[6]);
+	unsigned int home_vm = atoi(argv[5]);
 	int cluster_id = atoi(argv[7]);
 	int process_sequence = atoi(argv[8]);
 
 	resource_need need;
 	compute_resource_need(rand_task, r, m, c, &need);
-
-	//XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d \
-	//		cpu_time: %f, expected: %f\n",
-	//		need.cpu, need.memory, need.net, cluster_id, home_vm, MSG_process_self_PID(), need.cpu_time,
-	//		need.expected_time);
 
 	char exec_name[20];
 	char msg_name[20];
@@ -178,12 +201,12 @@ static int process_task(int argc, char* argv[])
 	uint8_t* data = xbt_new0(uint8_t, (uint64_t)need.memory);
 	msg_task_t comm_task = MSG_task_create(msg_name, 0, need.net, NULL);
 
+	msg_task_t executive_task = MSG_task_create(exec_name, need.cpu, 0, data);
+	MSG_task_set_data_size(executive_task, (uint64_t)need.memory);
+
 	double real_start_time = MSG_get_clock();
 
 	// Do the task
-
-	msg_task_t executive_task = MSG_task_create(exec_name, need.cpu, 0, data);
-	MSG_task_set_data_size(executive_task, (uint64_t)need.memory);
 
 	msg_error_t error = MSG_task_execute(executive_task);
 	if (error != MSG_OK)
@@ -202,11 +225,6 @@ static int process_task(int argc, char* argv[])
 
 	// Compute slow down of the task by dividing task_time by (real_finish_time - real_start_time)
 	double actual_life_time = real_finish_time - real_start_time;
-
-	double slowdown = actual_life_time / need.expected_time;
-
-	//XBT_INFO("PID_%d on cluster %d is going to be off with slowdown about: %f and actual time: %f, expected: %f\n",
-	//		MSG_process_self_PID(), cluster_id, slowdown, actual_life_time, need.expected_time);
 
 	((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], process_sequence))->
 		actual_time = actual_life_time;
@@ -236,9 +254,6 @@ static int process_task(int argc, char* argv[])
 			*(double*)MSG_host_get_property_value(MSG_process_get_host(MSG_process_self()), "net");
 		MSG_host_set_property_value(MSG_process_get_host(MSG_process_self()),
 				"net", (char*)net, free_double);
-
-	//	XBT_INFO("cluster_id: %d, vm: %d mem: %f, net: %f\n", cluster_id, home_vm,
-	//			*mem, *net);
 	}
 
 	return 0;
@@ -475,6 +490,14 @@ static void place_vm(int cluster_id, vm_placement placement)
 
 	// Update previous host info
 	host_vm_info pre_host_hvi = *(host_vm_info*)MSG_host_get_property_value(pre_host, "host_vm_info");
+	// TODO: update list of VMs
+	int index = 0;
+	for (; index < pre_host_hvi.number_of_vms; ++index)
+		if (pre_host_hvi.vms_index[index] == placement.vm) break;
+
+	memmove(&(pre_host_hvi.vms_index[index]), &(pre_host_hvi.vms_index[index + 1]),
+			pre_host_hvi.number_of_vms - index);
+
 	host_vm_info* pre_host_new_hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
 	memcpy(pre_host_new_hvi, &pre_host_hvi, sizeof(host_vm_info));
 	pre_host_new_hvi->number_of_vms--;
@@ -523,7 +546,7 @@ static int policy_func_inhab_mig(int cluster_id)
 
 	while (1)
 	{
-		MSG_process_sleep(10);		// TODO: It can be adjust to arrival rate or process lifetime
+		MSG_process_sleep(43);		// TODO: It can be adjust to arrival rate or process lifetime
 
 		MSG_sem_acquire(finish_sem);
 		if (finish)
@@ -538,28 +561,27 @@ static int policy_func_inhab_mig(int cluster_id)
 			hvi = (host_vm_info*)MSG_host_get_property_value(current_host, "host_vm_info");
 
 			int ncpus_host = MSG_host_get_core_number(current_host);
-			// Initialize the PM load indices
+			int ncpus_vms = 0;
 			pm_memory_usage = 0;
 			pm_net_usage = 0;
 			pm_load = 0;
 			for (vm = 0; vm < hvi->number_of_vms; ++vm)
 			{
 				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
-				int ncpus = MSG_host_get_core_number(current_vm);
+				ncpus_vms = MSG_host_get_core_number(current_vm);
 				pm_memory_usage += *(double*)MSG_host_get_property_value(current_vm, "mem");
 				pm_net_usage += *(double*)MSG_host_get_property_value(current_vm, "net");
-				pm_load += xbt_swag_size(MSG_host_get_process_list(current_vm)) / (double)ncpus;
+				pm_load += xbt_swag_size(MSG_host_get_process_list(current_vm)) * ncpus_vms;
 			}
 
 			int done_migration = 0;
 			for (vm = 0; vm < hvi->number_of_vms; ++vm)
 			{
 				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
-				//int ncpus = MSG_host_get_core_number(current_vm);
 				vm_memory_usage = *(double*)MSG_host_get_property_value(current_vm, "mem");
 				vm_net_usage = *(double*)MSG_host_get_property_value(current_vm, "net");
-				//vm_load = xbt_swag_size(MSG_host_get_process_list(current_vm)) / (double)ncpus;
-				vm_load = xbt_swag_size(MSG_host_get_process_list(current_vm));
+				ncpus_vms = MSG_host_get_core_number(current_vm);
+				vm_load = xbt_swag_size(MSG_host_get_process_list(current_vm)) * ncpus_vms;
 
 				inhabitancy_cost =
 					pow(number_of_involved_host, ((double)pm_load)/(max_pm_vm[cluster_id] * ncpus_host)) +
@@ -578,17 +600,17 @@ static int policy_func_inhab_mig(int cluster_id)
 					target_host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, k));
 					thvi = (host_vm_info*)MSG_host_get_property_value(target_host, "host_vm_info");
 					int tncpus = MSG_host_get_core_number(target_host);
+					int tncpus_vms = 0;
 					tm_memory_usage = 0;
 					tm_net_usage = 0;
 					tm_load = 0;
 					for (tvm = 0; tvm < thvi->number_of_vms; ++tvm)
 					{
 						target_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], thvi->vms_index[tvm]));
-						//int tncpus = MSG_host_get_core_number(current_vm);
+						tncpus_vms = MSG_host_get_core_number(target_vm);
 						tm_memory_usage += *(double*)MSG_host_get_property_value(target_vm, "mem");
 						tm_net_usage += *(double*)MSG_host_get_property_value(target_vm, "net");
-						//tm_load += xbt_swag_size(MSG_host_get_process_list(target_vm)) / (double)tncpus;
-						tm_load += xbt_swag_size(MSG_host_get_process_list(target_vm));
+						tm_load += xbt_swag_size(MSG_host_get_process_list(target_vm)) * tncpus_vms;
 					}
 
 					migration_cost =
@@ -600,33 +622,32 @@ static int policy_func_inhab_mig(int cluster_id)
 						pow(number_of_involved_host, tm_net_usage/MAX_PM_NET);
 
 					// comparing costs
-					if (migration_cost <= inhabitancy_cost / 2)
-					//if (migration_cost < inhabitancy_cost)
+					if (migration_cost < inhabitancy_cost / 2)
 					{
-					//	if (migration_cost < min_cost)
-					//	{
+						if (migration_cost < min_cost)
+						{
 							migration_decision_count++;
-					//		min_cost = migration_cost;
+							min_cost = migration_cost;
 							placement.vm = hvi->vms_index[vm];
 							placement.target_pm = k;
-							place_vm(cluster_id, placement);
-							memset(&placement, -1, sizeof(vm_placement));
-							done_migration = 1;
-							break;
-					//	}
+						}
 					}
 				}
-
-				if (done_migration)
-					break;
+			//	if (placement.vm > -1 && placement.target_pm > -1)
+			//	{
+			//		place_vm(cluster_id, placement);
+			//		memset(&placement, -1, sizeof(vm_placement));
+			//		hvi = (host_vm_info*)MSG_host_get_property_value(current_host, "host_vm_info");
+			//		--vm;
+			//	}
 			}
 
 			// A new placement is selected
-		//	if (placement.vm > -1 && placement.target_pm > -1)
-		//	{
-		//		place_vm(cluster_id, placement);
-		//		memset(&placement, -1, sizeof(vm_placement));
-		//	}
+			if (placement.vm > -1 && placement.target_pm > -1)
+			{
+				place_vm(cluster_id, placement);
+				memset(&placement, -1, sizeof(vm_placement));
+			}
 		}
 
 		MSG_sem_release(finish_sem);
@@ -695,15 +716,16 @@ static int create_tasks(int argc, char* argv[])
 
 	create_mailbox_processes();
 
-	srand(time_seed);
+	//srand(time_seed % time(NULL));
+	srand48(time_seed);
 
 	double arrival = 0;
-	unsigned int r = 0; // the factor we use in jobs execution time
-	unsigned int m = 0;
-	unsigned int c = 0;
-	unsigned int rand_task = 0;
+	double r = 0; // the factor we use in jobs execution time
+	double m = 0;
+	double c = 0;
+	double rand_task = 0;
+	double target_mailbox = 0;
 	unsigned int home_vm = 0;
-	unsigned int target_mailbox = 0;
 
 	msg_process_t process = NULL;
 	int process_argc = 9;
@@ -731,24 +753,25 @@ static int create_tasks(int argc, char* argv[])
 	int i = 0;
 	for (; i < number_of_processes; ++i)
 	{
-	//	if ( i % (20 % (number_of_processes / 20)) == 0)
+	//	if ( i % (15 % (number_of_processes / 15)) == 0)
 	//	{
-			arrival = ((double)rand()) / RAND_MAX;
-			arrival = arrival == 1 ? arrival - 0.005 : arrival;
-			double sleep_time = -log(1 - arrival) / process_arrival_rate;
-			mean_arrival_time += sleep_time / number_of_processes;
-			MSG_process_sleep(sleep_time);
+	//  	arrival = ((double)rand()) / RAND_MAX;
+	//  	arrival = arrival == 1 ? arrival - 0.001 : arrival;
+	//  	double sleep_time = -log(1 - arrival) / process_arrival_rate;
+	//  	mean_arrival_time += sleep_time / number_of_processes;
+	//  	MSG_process_sleep(sleep_time);
 	//	}
+	  	arrival = drand48();
+	  	arrival = arrival == 1 ? arrival - 0.001 : arrival;
+	  	double sleep_time = -log(1 - arrival) / process_arrival_rate;
+	  	mean_arrival_time += sleep_time / number_of_processes;
+	  	MSG_process_sleep(sleep_time);
 
-		r = rand();
-		srand(r);
-		m = rand();
-		srand(m);
-		c = rand();
-		srand(c);
-		rand_task = rand();
-		srand(rand_task);
-		target_mailbox = rand();
+		r = drand48();
+		m = drand48();
+		c = drand48();
+		rand_task = drand48();
+		target_mailbox = drand48();
 
 		compute_resource_need(rand_task, r, m, c, &need);
 		mean_cpu_time += (need.cpu / cpu_max_flops) / number_of_processes;
@@ -794,17 +817,18 @@ static int create_tasks(int argc, char* argv[])
 			process_argv[0] = xbt_new0(char, 40);
 			sprintf(process_argv[0], "%s", process_name);
 			process_argv[1] = xbt_new0(char, 40);
-			sprintf(process_argv[1], "%u", r);
+			sprintf(process_argv[1], "%f", r);
 			process_argv[2] = xbt_new0(char, 40);
-			sprintf(process_argv[2], "%u", m);
+			sprintf(process_argv[2], "%f", m);
 			process_argv[3] = xbt_new0(char, 40);
-			sprintf(process_argv[3], "%u", c);
+			sprintf(process_argv[3], "%f", c);
 			process_argv[4] = xbt_new0(char, 40);
-			sprintf(process_argv[4], "%u", rand_task);
+			sprintf(process_argv[4], "%f", rand_task);
 			process_argv[5] = xbt_new0(char, 40);
-			sprintf(process_argv[5], "%u", home_vm % number_of_vms);
+			//sprintf(process_argv[5], "%u", home_vm % number_of_vms);
+			sprintf(process_argv[5], "%u", home_vm);
 			process_argv[6] = xbt_new0(char, 40);
-			sprintf(process_argv[6], "%u", target_mailbox % number_of_vms);
+			sprintf(process_argv[6], "%u", (unsigned int)(target_mailbox * number_of_vms));
 			process_argv[7] = xbt_new0(char, 40);
 			sprintf(process_argv[7], "%d", cluster_id);
 			process_argv[8] = xbt_new0(char, 40);
@@ -832,8 +856,6 @@ static int create_tasks(int argc, char* argv[])
 				*net = need.net + *(double*)MSG_host_get_property_value(host, "net");
 				MSG_host_set_property_value(host, "net", (char*)net, free_double);
 
-			//	XBT_INFO("cluster_id: %d, vm: %d mem: %f, net: %f\n", cluster_id, home_vm,
-			//			*mem, *net);
 
 				MSG_task_destroy(msg_res);
 			}
@@ -953,6 +975,10 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_a
 	net_max = MAX_VM_NET / vm_to_host;
 	cpu_max_flops = MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0)));
 
+	int threshold = 0;
+	i = 0;
+
+	int vm_placement_method = no_vm % number_of_involved_host ? 1 : 0;
 
 	for (j = host; j < host + number_of_involved_host; j++, k++)
 	{
@@ -960,7 +986,21 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_a
 		host_vm_info* hvi = (host_vm_info*)malloc(sizeof(host_vm_info));
 		memset(hvi, 0, sizeof(host_vm_info));
 
-		for (i = k * vm_to_host; i < (k + 1) * vm_to_host && i < no_vm; ++i)
+		if (vm_placement_method)
+		{
+			if (j % 2)
+			{
+				threshold = i + vm_to_host + 1;
+			}
+			else
+			{
+				threshold = i + vm_to_host;
+			}
+		}
+		else
+			threshold = i + vm_to_host;
+
+		for (; i < threshold && i < no_vm; ++i)
 		{
 			sprintf(vm_name, "vm_%d_%d", cluster_id, i);
 
@@ -968,7 +1008,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_a
 			memset(&params, 0, sizeof(params));
 			params.ramsize = ramsize;
 		//	if (i % (no_vm / 50) == random)
-		//		params.ncpus = 4;
+		//params.ncpus = rand() % 20 + 1;
 
 			msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
 			MSG_host_set_params(vm, &params);
@@ -1057,27 +1097,38 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 
 	xbt_dynar_free(&vm_list[cluster_id]);
 
-	double mean_slowdown = 0;
-	double slowdown, actual, expected;
+	double mean_slowdown = 0, mean_exceed_percent = 0, total_exceed = 0, weigthed_slowdown = 0;
+	double slowdown, actual, expected, exceed_percent, total_expected = 0, total_actual = 0;
 	for (i = 0; i < no_process; ++i)
 	{
 		actual = ((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], i))->actual_time;
 		expected = ((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], i))->expected_time;
 
 		slowdown = actual / expected;
+		exceed_percent = (actual - expected) / actual;
 
-	//	printf("process: %d, slow down: %f, actual time: %f, expected time: %f\n",
-	//			i, slowdown, actual, expected);
+		total_actual += actual;
+		total_expected += expected;
 
 		mean_slowdown += slowdown;
+		mean_exceed_percent += exceed_percent;
+		total_exceed += actual - expected;
+		if (cluster_id == 0)
+			printf("%f\t%f\n", actual, expected);
 	}
 
 	mean_slowdown/=no_process;
+	mean_exceed_percent/=no_process;
+	weigthed_slowdown = total_actual / total_expected;
 	printf("cluster: %d slow down is : %f\n", cluster_id, mean_slowdown);
+	printf("cluster: %d weighted slow down is : %f\n", cluster_id, weigthed_slowdown);
+	printf("cluster: %d exceed percent is : %f\n", cluster_id, mean_exceed_percent);
+	printf("cluster: %d exceed is : %f\n", cluster_id, total_exceed);
 	printf("number of migration is : %d\n", migration_count);
 	printf("number of migration decision: %d\n", migration_decision_count);
 	printf("mean cpu time need: %f, total cpu time: %f, mean_arrival_time: %f\n",
 			mean_cpu_time, total_cpu_time, mean_arrival_time);
+	printf("RAND_MAX: %d", RAND_MAX);
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);

@@ -141,83 +141,6 @@ static void compute_resource_need(double rand_task, double r, double m, double c
 
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
-//	if (rand_task < 0.95)
-//	{
-//		//r = r < 0.00001? 0.00001 : r;
-//		r = r < 0.1? 0.1 : r;
-//		double d = (double)lrand48() / 2.0e31;
-//		if (d < 0.5)
-//			need->cpu = (2 / r + 40) * cpu_max_flops;
-//		else
-//			need->cpu = (40 - 4 / r) * cpu_max_flops;
-//
-//		m = m <= 0.1 ? 0.1 : m;
-//		need->memory = 1 / m * memory_max;
-//
-//		c = c <= 0.1? 0.1 : c;
-//		need->net = 1 / c * net_max;
-//
-//		//need->cpu_time = 2 / r;
-//		if (d < 0.5)
-//			need->cpu_time = 2 / r + 40;
-//		else
-//			need->cpu_time = 40 - 4 / r;
-//
-//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
-//	}
-//	else 
-//	{
-//		//r = r < 0.00001? 0.00001 : r;
-//		//need->cpu = 20 / r * cpu_max_flops;
-//		r = r < 0.1? 0.1 : r;
-//		double d = (double)lrand48() / 2.0e31;
-//		if (d < 0.5)
-//			need->cpu = (20 / r + 400) * cpu_max_flops;
-//		else
-//			need->cpu = (400 - 40 / r) * cpu_max_flops;
-//
-//		m = m <= 0.1 ? 0.1 : m;
-//		need->memory = 1 / m * memory_max;
-//
-//		c = c <= 0.1? 0.1 : c;
-//		need->net = 1 / c * net_max;
-//
-//		//need->cpu_time = 20 / r;
-//		if (d < 0.5)
-//			need->cpu_time = 2 / r + 400;
-//		else
-//			need->cpu_time = 400 - 4 / r;
-//
-//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
-//	}
-//	if (((double)(rand_task) / RAND_MAX) < 0.8)
-//	{
-//		r = r < RAND_MAX / 100000 ? RAND_MAX / 100000 : r * 2;
-//		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops;
-//
-//		m = m <= 10 ? 10 : m;
-//		need->memory = (double)(m) / (RAND_MAX) * memory_max;
-//
-//		c = c <= 10? 10 : c;
-//		need->net = ((double)(c) / RAND_MAX) * net_max;
-//
-//		need->cpu_time = RAND_MAX / (double)(r);
-//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
-//	}
-//	else 
-//	{
-//		r = r < RAND_MAX / 100000 ? RAND_MAX / 100000 : r;
-//		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 20;
-//
-//		m = m <= 10 ? 10 : m;
-//		need->memory = (double)(m) / (RAND_MAX) * memory_max;
-//
-//		c = c <= 10? 10 : c;
-//		need->net = ((double)(c) / RAND_MAX) * net_max;	
-//
-//		need->cpu_time = RAND_MAX / (double)(r) * 20;
-//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
-//	}
 }
 
 // Create process and a task with the passing parameters of CPU, Memory and communication.
@@ -699,13 +622,6 @@ static int policy_func_inhab_mig(int cluster_id)
 						}
 					}
 				}
-			//	if (placement.vm > -1 && placement.target_pm > -1)
-			//	{
-			//		place_vm(cluster_id, placement);
-			//		memset(&placement, -1, sizeof(vm_placement));
-			//		hvi = (host_vm_info*)MSG_host_get_property_value(current_host, "host_vm_info");
-			//		--vm;
-			//	}
 			}
 
 			// A new placement is selected
@@ -716,28 +632,6 @@ static int policy_func_inhab_mig(int cluster_id)
 				done_migration = 1;
 			}
 		}
-
-		if ((sleep_time > 10) || done_migration)
-		{
-			sleep_time *= done_migration ? 1.5 : 0.5;
-			mig++;
-		}
-		if (mig == 5)
-		{
-			mig = 0;
-			sleep_time = 180;
-		}
-		if (!done_migration)
-		{
-			no_migration++;
-			mig = 0;
-			if (no_migration == 10)
-			{
-				no_migration = 0;
-				sleep_time *= 10;
-			}
-		}
-
 
 		MSG_sem_release(finish_sem);
 	}
@@ -805,7 +699,6 @@ static int create_tasks(int argc, char* argv[])
 
 	create_mailbox_processes();
 
-	//srand(time_seed % time(NULL));
 	srand48(time_seed);
 
 	double arrival = 0;
@@ -827,7 +720,6 @@ static int create_tasks(int argc, char* argv[])
 	load_balance_request* request = (load_balance_request*)malloc(sizeof(load_balance_request));
 	msg_task_t msg_res = NULL;
 	char response_mailbox[NUMBER_OF_CLUSTERS][20];
-	//load_balance_response* response = NULL;
 
 	int cluster_id = 0;
 	for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
@@ -842,14 +734,6 @@ static int create_tasks(int argc, char* argv[])
 	int i = 0;
 	for (; i < number_of_processes; ++i)
 	{
-	//	if ( i % (15 % (number_of_processes / 15)) == 0)
-	//	{
-	//  	arrival = ((double)rand()) / RAND_MAX;
-	//  	arrival = arrival == 1 ? arrival - 0.001 : arrival;
-	//  	double sleep_time = -log(1 - arrival) / process_arrival_rate;
-	//  	mean_arrival_time += sleep_time / number_of_processes;
-	//  	MSG_process_sleep(sleep_time);
-	//	}
 	  	arrival = drand48();
 	  	arrival = arrival == 1 ? arrival - 0.0001 : arrival;
 	  	double sleep_time = -log(1 - arrival) / process_arrival_rate;
@@ -871,8 +755,6 @@ static int create_tasks(int argc, char* argv[])
 			// Only first cluster does load balance
 			if (cluster_id == 0)
 			{
-				//rand();
-
 				request->memory = need.memory;
 				request->net = need.memory;
 				request->task_number = i;
@@ -891,13 +773,10 @@ static int create_tasks(int argc, char* argv[])
 							i, cluster_id);
 
 				home_vm = ((load_balance_response*)MSG_task_get_data(msg_res))->target_host;
-				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
 			}
 			else
 			{
 				home_vm = i % number_of_vms;		// Round-Robin
-				//home_vm = rand() % number_of_vms;
-				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
 			}
 
 			char process_name[40];
@@ -914,7 +793,6 @@ static int create_tasks(int argc, char* argv[])
 			process_argv[4] = xbt_new0(char, 40);
 			sprintf(process_argv[4], "%f", rand_task);
 			process_argv[5] = xbt_new0(char, 40);
-			//sprintf(process_argv[5], "%u", home_vm % number_of_vms);
 			sprintf(process_argv[5], "%u", home_vm);
 			process_argv[6] = xbt_new0(char, 40);
 			sprintf(process_argv[6], "%u", (unsigned int)(target_mailbox * number_of_vms));

@@ -26,7 +26,7 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 #define MAX_PM_MEMORY 8e9
 #define MAX_VM_NET 1.25e8
 #define MAX_PM_NET 1.25e8
-#define MAX_VM_TO_PM 50		// It is related to number of vms we run on PMs.
+#define MAX_VM_TO_PM 80		// It is related to number of vms we run on PMs.
 
 typedef enum HOST_ASSIGN_POLICY
 {
@@ -111,7 +111,7 @@ void free_host_vm_info(void* pointer)
 
 static void compute_resource_need(double rand_task, double r, double m, double c, resource_need* need)
 {
-	if (rand_task < 0.75)
+	if (rand_task < 0.95)
 	{
 		r = r < 0.00001? 0.00001 : r;
 		need->cpu = 2 / r * cpu_max_flops;
@@ -123,6 +123,7 @@ static void compute_resource_need(double rand_task, double r, double m, double c
 		need->net = 1 / c * net_max;
 
 		need->cpu_time = 2 / r;
+
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
 	else 
@@ -137,8 +138,58 @@ static void compute_resource_need(double rand_task, double r, double m, double c
 		need->net = 1 / c * net_max;
 
 		need->cpu_time = 20 / r;
+
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
+//	if (rand_task < 0.95)
+//	{
+//		//r = r < 0.00001? 0.00001 : r;
+//		r = r < 0.1? 0.1 : r;
+//		double d = (double)lrand48() / 2.0e31;
+//		if (d < 0.5)
+//			need->cpu = (2 / r + 40) * cpu_max_flops;
+//		else
+//			need->cpu = (40 - 4 / r) * cpu_max_flops;
+//
+//		m = m <= 0.1 ? 0.1 : m;
+//		need->memory = 1 / m * memory_max;
+//
+//		c = c <= 0.1? 0.1 : c;
+//		need->net = 1 / c * net_max;
+//
+//		//need->cpu_time = 2 / r;
+//		if (d < 0.5)
+//			need->cpu_time = 2 / r + 40;
+//		else
+//			need->cpu_time = 40 - 4 / r;
+//
+//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
+//	}
+//	else 
+//	{
+//		//r = r < 0.00001? 0.00001 : r;
+//		//need->cpu = 20 / r * cpu_max_flops;
+//		r = r < 0.1? 0.1 : r;
+//		double d = (double)lrand48() / 2.0e31;
+//		if (d < 0.5)
+//			need->cpu = (20 / r + 400) * cpu_max_flops;
+//		else
+//			need->cpu = (400 - 40 / r) * cpu_max_flops;
+//
+//		m = m <= 0.1 ? 0.1 : m;
+//		need->memory = 1 / m * memory_max;
+//
+//		c = c <= 0.1? 0.1 : c;
+//		need->net = 1 / c * net_max;
+//
+//		//need->cpu_time = 20 / r;
+//		if (d < 0.5)
+//			need->cpu_time = 2 / r + 400;
+//		else
+//			need->cpu_time = 400 - 4 / r;
+//
+//		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
+//	}
 //	if (((double)(rand_task) / RAND_MAX) < 0.8)
 //	{
 //		r = r < RAND_MAX / 100000 ? RAND_MAX / 100000 : r * 2;
@@ -544,9 +595,14 @@ static int policy_func_inhab_mig(int cluster_id)
 	int host = (cluster_id) * total_cluster_host;
 	M = host + number_of_involved_host;
 
+	double sleep_time = 180;
+	int done_migration = 0;
+	int no_migration = 0;
+	int mig = 0;
+
 	while (1)
 	{
-		MSG_process_sleep(43);		// TODO: It can be adjust to arrival rate or process lifetime
+		MSG_process_sleep(360);		// TODO: It can be adjust to arrival rate or process lifetime
 
 		MSG_sem_acquire(finish_sem);
 		if (finish)
@@ -555,8 +611,17 @@ static int policy_func_inhab_mig(int cluster_id)
 			break;
 		}
 
-		for (m = host; m < M; ++m)
+		int x = rand() % (number_of_involved_host);
+		int z = host;
+		done_migration = 0;
+
+		for (m = host + x; /*m < M*/ z < M; ++m, ++z)
 		{
+			if (m == M)
+			{
+				m = host;
+			}
+
 			current_host = *((msg_host_t*)xbt_dynar_get_ptr(hosts_dynar, m));
 			hvi = (host_vm_info*)MSG_host_get_property_value(current_host, "host_vm_info");
 
@@ -574,7 +639,8 @@ static int policy_func_inhab_mig(int cluster_id)
 				pm_load += xbt_swag_size(MSG_host_get_process_list(current_vm)) * ncpus_vms;
 			}
 
-			int done_migration = 0;
+			min_cost = DBL_MAX;
+
 			for (vm = 0; vm < hvi->number_of_vms; ++vm)
 			{
 				current_vm = *((msg_vm_t*)xbt_dynar_get_ptr(vm_list[cluster_id], hvi->vms_index[vm]));
@@ -624,7 +690,7 @@ static int policy_func_inhab_mig(int cluster_id)
 					// comparing costs
 					if (migration_cost < inhabitancy_cost / 2)
 					{
-						if (migration_cost < min_cost)
+						if (migration_cost <= min_cost)
 						{
 							migration_decision_count++;
 							min_cost = migration_cost;
@@ -647,8 +713,31 @@ static int policy_func_inhab_mig(int cluster_id)
 			{
 				place_vm(cluster_id, placement);
 				memset(&placement, -1, sizeof(vm_placement));
+				done_migration = 1;
 			}
 		}
+
+		if ((sleep_time > 10) || done_migration)
+		{
+			sleep_time *= done_migration ? 1.5 : 0.5;
+			mig++;
+		}
+		if (mig == 5)
+		{
+			mig = 0;
+			sleep_time = 180;
+		}
+		if (!done_migration)
+		{
+			no_migration++;
+			mig = 0;
+			if (no_migration == 10)
+			{
+				no_migration = 0;
+				sleep_time *= 10;
+			}
+		}
+
 
 		MSG_sem_release(finish_sem);
 	}
@@ -762,7 +851,7 @@ static int create_tasks(int argc, char* argv[])
 	//  	MSG_process_sleep(sleep_time);
 	//	}
 	  	arrival = drand48();
-	  	arrival = arrival == 1 ? arrival - 0.001 : arrival;
+	  	arrival = arrival == 1 ? arrival - 0.0001 : arrival;
 	  	double sleep_time = -log(1 - arrival) / process_arrival_rate;
 	  	mean_arrival_time += sleep_time / number_of_processes;
 	  	MSG_process_sleep(sleep_time);

@@ -26,7 +26,7 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 #define MAX_PM_MEMORY 8e9
 #define MAX_VM_NET 1.25e8
 #define MAX_PM_NET 1.25e8
-#define MAX_VM_TO_PM 80		// It is related to number of vms we run on PMs.
+#define MAX_VM_TO_PM 5		// It is related to number of vms we run on PMs.
 
 typedef enum HOST_ASSIGN_POLICY
 {
@@ -40,8 +40,6 @@ typedef struct slow_down_t
 	double expected_time;
 	double actual_time;
 } SlowDown;
-
-static xbt_dynar_t slow_down[NUMBER_OF_CLUSTERS];
 
 typedef struct LoadBalanceResponse
 {
@@ -92,10 +90,14 @@ static double cpu_max_flops;
 static double memory_max;
 static double net_max;
 
+static xbt_dynar_t slow_down[NUMBER_OF_CLUSTERS];
+static xbt_dynar_t finish_times[NUMBER_OF_CLUSTERS];
 static msg_sem_t finish_sem;
 static int finish;
 static int migration_count;
 static int migration_decision_count;
+static double start_time;
+static double finish_time[NUMBER_OF_CLUSTERS];
 
 // void_f_pvoid_t function to free double*
 void free_double(void* pointer)
@@ -113,8 +115,9 @@ static void compute_resource_need(double rand_task, double r, double m, double c
 {
 	if (rand_task < 0.95)
 	{
-		r = r < 0.00001? 0.00001 : r;
-		need->cpu = 2 / r * cpu_max_flops;
+		//r = r < 0.000001? 0.000001 : r;
+		r = r < 0.01? 0.01 : r;
+		need->cpu = rand_task < 0.5 ? (200 + 2 / r) * cpu_max_flops : (200 - 2 / r) * cpu_max_flops;
 
 		m = m <= 0.1 ? 0.1 : m;
 		need->memory = 1 / m * memory_max;
@@ -122,13 +125,13 @@ static void compute_resource_need(double rand_task, double r, double m, double c
 		c = c <= 0.1? 0.1 : c;
 		need->net = 1 / c * net_max;
 
-		need->cpu_time = 2 / r;
+		need->cpu_time = rand_task < 0.5 ? 200 + 2 / r : 200 - 2 / r;
 
 		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
 	}
 	else 
 	{
-		r = r < 0.00001? 0.00001 : r;
+		r = r < 0.000001? 0.000001 : r;
 		need->cpu = 20 / r * cpu_max_flops;
 
 		m = m <= 0.1 ? 0.1 : m;
@@ -200,6 +203,8 @@ static int process_task(int argc, char* argv[])
 	// Compute slow down of the task by dividing task_time by (real_finish_time - real_start_time)
 	double actual_life_time = real_finish_time - real_start_time;
 
+	xbt_dynar_set_as(finish_times[cluster_id], process_sequence, double, real_finish_time);
+
 	((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], process_sequence))->
 		actual_time = actual_life_time;
 	((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], process_sequence))->
@@ -207,7 +212,7 @@ static int process_task(int argc, char* argv[])
 
 	char fin_name[40];
 	char fin_mailbox[20];
-	sprintf(fin_name, "fin_%d", MSG_process_self_PID());
+	sprintf(fin_name, "%d_%d", cluster_id, MSG_process_self_PID());
 	sprintf(fin_mailbox, "fin_mailbox");
 	msg_task_t fin_msg = MSG_task_create(fin_name, 0, 1, NULL);
 	ret = MSG_OK;
@@ -525,7 +530,7 @@ static int policy_func_inhab_mig(int cluster_id)
 
 	while (1)
 	{
-		MSG_process_sleep(360);		// TODO: It can be adjust to arrival rate or process lifetime
+		MSG_process_sleep(180);		// TODO: It can be adjust to arrival rate or process lifetime
 
 		MSG_sem_acquire(finish_sem);
 		if (finish)
@@ -535,6 +540,7 @@ static int policy_func_inhab_mig(int cluster_id)
 		}
 
 		int x = rand() % (number_of_involved_host);
+		//int x = 0;
 		int z = host;
 		done_migration = 0;
 
@@ -728,6 +734,8 @@ static int create_tasks(int argc, char* argv[])
 		sprintf(load_balancer_mailbox[cluster_id], "load_balancer_mailbox_%d", cluster_id);
 	}
 
+	start_time = MSG_get_clock();
+
 	// Loops until creates all processes. We think that number of processes must be larger than 10000.
 	// 5% of tasks must be of 20/r CPU and 95% must be 2/r.
 	// The communication time is c% of CPU time.
@@ -735,8 +743,9 @@ static int create_tasks(int argc, char* argv[])
 	for (; i < number_of_processes; ++i)
 	{
 	  	arrival = drand48();
-	  	arrival = arrival == 1 ? arrival - 0.0001 : arrival;
+	  	arrival = arrival == 1 ? arrival - 0.000000001 : arrival;
 	  	double sleep_time = -log(1 - arrival) / process_arrival_rate;
+		//sleep_time = sleep_time > 100 ? 100 : sleep_time;
 	  	mean_arrival_time += sleep_time / number_of_processes;
 	  	MSG_process_sleep(sleep_time);
 
@@ -773,10 +782,30 @@ static int create_tasks(int argc, char* argv[])
 							i, cluster_id);
 
 				home_vm = ((load_balance_response*)MSG_task_get_data(msg_res))->target_host;
+				//home_vm = i % number_of_vms;		// Round-Robin
 			}
 			else
 			{
+			//	request->memory = need.memory;
+			//	request->net = need.memory;
+			//	request->task_number = i;
+			//	request->request = 0;
+
+			//	sprintf(req_name[cluster_id], "load_balancing_%d_%d", cluster_id, i);
+			//	msg_req = MSG_task_create(req_name[cluster_id], 0, sizeof(*request), request);
+
+			//	// Request-Response to load balancer
+			//	while (MSG_task_send(msg_req, load_balancer_mailbox[cluster_id]) != MSG_OK)
+			//		XBT_INFO("create task has just failed to send load balancing request of %d on %d\n", i,
+			//				cluster_id);
+
+			//	while (MSG_task_receive(&msg_res, response_mailbox[cluster_id]) != MSG_OK)
+			//		XBT_INFO("create task has just failed to receive load balancing response of %d on %d\n",
+			//				i, cluster_id);
+
+			//	home_vm = ((load_balance_response*)MSG_task_get_data(msg_res))->target_host;
 				home_vm = i % number_of_vms;		// Round-Robin
+				//home_vm = 0;
 			}
 
 			char process_name[40];
@@ -859,6 +888,11 @@ static int get_finalize(int argc, char* argv[])
 		while ((ret = MSG_task_receive(&r_msg, fin_mailbox) != MSG_OK))
 			XBT_INFO("faile to receive the fin from process\n");
 
+	//	if (!strncmp(MSG_task_get_name(r_msg), "1", 1))
+	//		finish_time[1] = MSG_get_clock();
+	//	else
+	//		finish_time[0] = MSG_get_clock();
+
 		MSG_task_destroy(r_msg);
 		r_msg = NULL;
 	}
@@ -915,12 +949,14 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id, host_a
 	migration_decision_count = 0;
 
 	slow_down[cluster_id] = xbt_dynar_new(sizeof(SlowDown), NULL);
+	finish_times[cluster_id] = xbt_dynar_new(sizeof(double), NULL);
 	int i = 0, j = 0, k = 0;
 	for (; i < no_process; ++i)
 	{
 		SlowDown slow_down_process;
 		memset(&slow_down_process, 0, sizeof(slow_down_process));
 		xbt_dynar_set(slow_down[cluster_id], i, &slow_down_process);
+		xbt_dynar_set_as(finish_times[cluster_id], i, double, 0);
 	}
 
 	vm_list[cluster_id] = xbt_dynar_new(sizeof(msg_vm_t), NULL);
@@ -1084,8 +1120,25 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 			printf("%f\t%f\n", actual, expected);
 	}
 
+	double mean_finish_time_diff = 0;
+	double max_finish_time = 0;
+	if (cluster_id == 0)
+	{
+		double finish0 = 0, finish1 = 0;
+		for (i = 0; i < no_process; ++i)
+		{
+			finish0 = xbt_dynar_get_as(finish_times[0], i, double);
+			finish1 = xbt_dynar_get_as(finish_times[1], i, double);
+			//printf("diff finish time: %f\n", finish1 - finish0);
+			//mean_finish_time_diff += (i + 1) * (finish1 - finish0) / finish0;
+			mean_finish_time_diff += (i + 1) * (finish1 - finish0);
+			//mean_finish_time_diff += (finish1 - finish0);
+			max_finish_time = max_finish_time < finish0 ? finish0 : max_finish_time;
+		}
+	}
+
 	mean_slowdown/=no_process;
-	mean_exceed_percent/=no_process;
+	//mean_exceed_percent/=no_process;
 	weigthed_slowdown = total_actual / total_expected;
 	printf("cluster: %d slow down is : %f\n", cluster_id, mean_slowdown);
 	printf("cluster: %d weighted slow down is : %f\n", cluster_id, weigthed_slowdown);
@@ -1095,7 +1148,9 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 	printf("number of migration decision: %d\n", migration_decision_count);
 	printf("mean cpu time need: %f, total cpu time: %f, mean_arrival_time: %f\n",
 			mean_cpu_time, total_cpu_time, mean_arrival_time);
-	printf("RAND_MAX: %d", RAND_MAX);
+	printf("the lifetime of application is in cluster : %f\n",
+			(2 * mean_finish_time_diff) / (no_process * (no_process - 1)));
+	printf("max finish time: %f\n", max_finish_time);
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);

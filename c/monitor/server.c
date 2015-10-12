@@ -10,11 +10,12 @@ typedef struct Host
   struct Host *next;
 } Host;
 
-int response_to_api(zmq_msg_t *msg);
+int response_to_api(zmq_msg_t *msg, void* api_socket);
 int set_host_utility(zmq_msg_t *msg);
 void err_exit(char *err);
 void log_err(char *err);
 Host *find_host(Host *hosts, char *ip);
+MachineMetric *find_machine(Host *hosts, char *ip);
 void hm_free(HostMetric **metric);
 
 Host* hosts;
@@ -27,10 +28,10 @@ int main(int argc, char *argv[]) {
   void* socket = zmq_socket(context, ZMQ_PULL);
   zmq_bind(socket, "tcp://*:5050");
   // API socket creation and binding
-  void* api_socket = zmq_socket(context, ZMQ_PULL);
+  void* api_socket = zmq_socket(context, ZMQ_REP);
   zmq_bind(api_socket, "tcp://*:5051");
 
-  signal(SIGINT, exit);
+  //signal(SIGINT, exit);
   printf("Starting server...\n");
 
   zmq_pollitem_t polls[2];
@@ -57,7 +58,7 @@ int main(int argc, char *argv[]) {
     if(polls[1].revents > 0) {
       zmq_msg_init(&msg);
       zmq_msg_recv(&msg, api_socket, 0);
-      response_to_api(&msg);
+      response_to_api(&msg, api_socket);
       zmq_msg_close(&msg);
     }
   }
@@ -68,13 +69,58 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
-int response_to_api(zmq_msg_t *msg) {
-  printf("message received\n");
+int response_to_api(zmq_msg_t *msg, void* api_socket) {
+  zmq_msg_t reply;
+  InterfaceMessage *message = NULL;
+  char *buf;
+  unsigned int len = zmq_msg_size(msg);
+  unsigned char *packed_msg = (unsigned char *) malloc(len+1);
+  memcpy(packed_msg, zmq_msg_data(msg), len);
+  message = interface_message__unpack(NULL, len, packed_msg);
+  printf("ip: %s", message->ip);
+
+  if (message->is_host == 1) {
+    Host *response_host = find_host(hosts, message->ip);
+    if (response_host != NULL) {
+      printf("host find\n");
+  //     int t_length = host_metric__get_packed_size(&response_host);
+  //     buf = malloc(t_length);
+  //     host_metric__pack(&response_host, buf);
+  //     zmq_msg_init_size(&reply, t_length);
+  //     if(zmsg_addmem(&reply, buf, len) != 0){
+  //       printf("error\n");
+  //     }
+    } else {
+      printf("host not found\n");
+  //     HostMetric response;
+  //     interface_message__init(&response);
+    }
+  } else {
+    MachineMetric *response_machine = find_machine(hosts, message->ip);
+    if (response_machine != NULL) {
+      printf("machin found\n");
+      int t_length = machine_metric__get_packed_size(response_machine);
+      buf = malloc(t_length);
+      machine_metric__pack(response_machine, buf);
+      zmq_msg_init_size(&reply, t_length);
+      memcpy(zmq_msg_data(&message), buf, t_length);
+    } else {
+      printf("machine not found\n");
+    }
+  }
+
+  // zmq_msg_init_size(&reply, strlen("world"));
+  // memcpy(zmq_msg_data(&reply), "world", 5);
+  zmq_msg_send(&buf, api_socket, 0);
+  zmq_msg_close(&reply);
+
+  return 0;
 }
 
 int set_host_utility(zmq_msg_t *msg) {
 
   Host *host = NULL, *host_tmp = NULL;
+  int i = 0, j = 0;
   unsigned int len = zmq_msg_size(msg);
   unsigned char *packed_msg = (unsigned char *) malloc(len+1);
   memcpy(packed_msg, zmq_msg_data(msg), len);
@@ -121,10 +167,10 @@ int set_host_utility(zmq_msg_t *msg) {
       host_tmp->metric->ram_usage_total_average =
         ((AVERAGE_RATE-1)*host->metric->ram_usage_total_average + host_tmp->metric->ram_usage_total_average) / AVERAGE_RATE;
 
-      for(int i=0; i<host->metric->n_machines; i++) {
+      for(i=0; i<host->metric->n_machines; i++) {
         // Find machine
         int machine_index = -1;
-        for(int j=0; j<host_tmp->metric->n_machines; j++) {
+        for(j=0; j<host_tmp->metric->n_machines; j++) {
           if(strcmp(host->metric->machines[i]->uuid, host_tmp->metric->machines[j]->uuid) == 0) {
             machine_index = j;
             break;
@@ -174,12 +220,24 @@ int set_host_utility(zmq_msg_t *msg) {
 }
 
 Host *find_host(Host *hosts, char *ip) {
-  if (hosts == NULL) {
-    return NULL;
-  }
-  while (hosts->next != NULL) {
+  while (hosts != NULL) {
     if (strcmp(hosts->metric->ip, ip) == 0) {
       return hosts;
+    }
+    hosts = hosts->next;
+  }
+  return NULL;
+}
+
+MachineMetric *find_machine(Host *hosts, char *ip) {
+  int i = 0;
+  while (hosts != NULL) {
+    printf("host check\n");
+    for (i=0; i<hosts->metric->n_machines;i++) {
+      printf("%s in\n", hosts->metric->machines[i]->ip);
+      if (strcmp(hosts->metric->machines[i]->ip, ip) == 0) {
+        return hosts->metric->machines[i];
+      }
     }
     hosts = hosts->next;
   }

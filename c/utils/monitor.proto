@@ -15,3 +15,7 @@ message HostMetric {
   optional int32 ram_usage_total_average = 6;
   repeated MachineMetric machines = 7;
 }
+message InterfaceMessage {
+  optional int32 is_host = 1;
+  optional string ip = 2;
+}

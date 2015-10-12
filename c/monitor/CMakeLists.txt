@@ -7,4 +7,6 @@ target_link_libraries(monitor LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_L
 add_executable(server server.c)
 target_link_libraries(server LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS} zmq czmq utils XPCOM VBoxCAPIGlue protobuf-c)
 add_executable(apiTest apiTest.c)
-target_link_libraries(apiTest LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS} zmq czmq)
+target_link_libraries(apiTest LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS} zmq czmq utils protobuf-c)
+add_executable(interface interface.c)
+target_link_libraries(interface LINK_PUBLIC ${CMAKE_THREAD_LIBS_INIT} ${CMAKE_DL_LIBS} zmq czmq utils protobuf-c)

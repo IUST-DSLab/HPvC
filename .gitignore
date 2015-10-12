@@ -27,6 +27,7 @@ vhpc
 /c/organizer/organizer
 /c/monitor/monitor
 /c/monitor/server
+/c/monitor/interface
 lib
 Makefile
 sdk

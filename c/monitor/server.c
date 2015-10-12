@@ -103,7 +103,7 @@ int response_to_api(zmq_msg_t *msg, void* api_socket) {
       buf = malloc(t_length);
       machine_metric__pack(response_machine, buf);
       zmq_msg_init_size(&reply, t_length);
-      memcpy(zmq_msg_data(&message), buf, t_length);
+      memcpy(zmq_msg_data(&reply), buf, t_length);
     } else {
       printf("machine not found\n");
     }
@@ -111,7 +111,7 @@ int response_to_api(zmq_msg_t *msg, void* api_socket) {
 
   // zmq_msg_init_size(&reply, strlen("world"));
   // memcpy(zmq_msg_data(&reply), "world", 5);
-  zmq_msg_send(&buf, api_socket, 0);
+  zmq_msg_send(&reply, api_socket, 0);
   zmq_msg_close(&reply);
 
   return 0;

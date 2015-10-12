@@ -31,9 +31,10 @@
 //   return packed_msg; 
 // }
 
-void getMetricPackedMessageFromServer(int is_host, char *ip) {
+void* getMetricPackedMessageFromServer(int is_host, char *ip) {
   void* context = zmq_ctx_new();
-
+  MachineMetric *machine = NULL;
+  HostMetric *host = NULL;
   void* socket = zmq_socket(context, ZMQ_REQ);
   zmq_connect(socket, "tcp://localhost:5051");
   char *buf;
@@ -55,11 +56,19 @@ void getMetricPackedMessageFromServer(int is_host, char *ip) {
   unsigned int len = zmq_msg_size(&reply);
   unsigned char *packed_msg = (unsigned char *) malloc(len+1);
   memcpy(packed_msg, zmq_msg_data(&reply), len);
-  printf("%s\n", packed_msg);
   zmq_msg_close(&reply);
-  printf("%s\n", packed_msg);
-
   free(buf);
+  if (is_host == 0) {
+    
+    machine = machine_metric__unpack(NULL, len, packed_msg);
+    return machine;
+  } else {
+    
+    machine = host_metric__unpack(NULL, len, packed_msg);
+    return host;
+  }
+
+  
 }
 
 // void getHostMetric(char *ip, HostMetric *result) {
@@ -86,6 +95,7 @@ void getMetricPackedMessageFromServer(int is_host, char *ip) {
 // }
 
 int main() {
-  getMetricPackedMessageFromServer(0,"127.0.0.1");
+  MachineMetric *machine = (MachineMetric*) getMetricPackedMessageFromServer(0,"127.0.0.1");
+  printf("%s\n", machine->uuid);
   return 0;
 }

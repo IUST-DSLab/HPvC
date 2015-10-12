@@ -273,6 +273,7 @@ void _get_metrics(HostMetric *metrics) {
       else if (strcmp(name, "Guest/CPU/Load/User:avg") == 0) {
         found_machine->metrics.cpu_load_usage = res;
       }
+      // INetworkAdapter *adaptor = found_machine.getNetworkAdapter(0)
       found_machine->metrics.ip = "127.0.0.1";
       found_machine->metrics.cpu = 2;
       found_machine->metrics.cpu_load_usage = 12;

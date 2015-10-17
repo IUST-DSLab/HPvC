@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <signal.h>
 #include "monitor.pb-c.h"
+#include <yaml.h>
 
 
 /* This struct will use as link list
@@ -41,12 +42,24 @@ Machine *find_machine(Machine *machines, char *uuid);
 Machine *last_machine(Machine *machines);
 void err_exit(char *err);
 void log_err(char *err);
+void _parse_yaml(yaml_parser_t *parser);
+
+char *server_ip;
+char *server_port;
+char *working_mode;
 
 
 int main(int argc, char *argv[]) {
+  yaml_parser_t yaml_parser;
 
   ULONG revision = 0;
   HRESULT rc;
+
+  FILE *yaml_file_input = fopen("monitor/monitor.yaml", "rb");
+  if (yaml_file_input == NULL) {
+    printf("Config file not found!\nYou should monitor from c folder, if you run it from monitor folder it cause to this error!\n");
+    return 1;
+  }
 
   context = zctx_new();
 
@@ -68,6 +81,22 @@ int main(int argc, char *argv[]) {
   if (FAILED(rc)) {
     err_exit("Could not get PerformanceCollector refrence.");
   }
+
+
+
+
+  /* Create the Parser object. */
+  yaml_parser_initialize(&yaml_parser);
+  yaml_parser_set_input_file(&yaml_parser, yaml_file_input);
+  _parse_yaml(&yaml_parser);
+  yaml_parser_delete(&yaml_parser);
+  fclose(yaml_file_input);
+
+  printf("*****************************************\n");
+  printf("Monitor working mode: %s\n", working_mode);
+  printf("Server IP: %s\n", server_ip);
+  printf("Server's monitor port: %s\n", server_port);
+  printf("*****************************************\n");
 
   // Initialize out array needed for virtual box metrics
   metric_names = g_pVBoxFuncs->pfnSafeArrayOutParamAlloc();
@@ -119,6 +148,7 @@ void _send_host_metrics() {
   // Variable needed for protobuf
   unsigned char *buf;
   unsigned int len;
+  char *server_addr;
 
   HRESULT rc;
 
@@ -127,7 +157,9 @@ void _send_host_metrics() {
 
   signal(SIGINT, exit);
   // Connect to server
-  zsocket_connect(request, "tcp://localhost:5050");
+  server_addr = (char *) malloc(strlen(server_ip)+strlen(server_port)+7);
+  sprintf(server_addr, "tcp://%s:%s", server_ip, server_port);
+  zsocket_connect(request, server_addr);
 
   // Get HostMetrics data
   _get_metrics(&metric); 
@@ -361,4 +393,47 @@ void err_exit(char *err) {
 
 void log_err(char *err) {
   fprintf(stderr, err);
+}
+
+void _parse_yaml(yaml_parser_t *parser) {
+  yaml_event_t event;
+  int is_key = 0;
+  void **key;
+  while (1) {
+    yaml_parser_parse(parser, &event);
+    switch (event.type) {
+      case YAML_SCALAR_EVENT:
+        if (is_key == 0) {
+          
+          if (strcmp (event.data.scalar.value, "working_mode") == 0) {
+            key = &working_mode;
+          } else if (strcmp (event.data.scalar.value, "server_ip") == 0) {
+            key = &server_ip; 
+          } else if (strcmp (event.data.scalar.value, "server_monitor_port") == 0) {
+            key = &server_port;
+          }
+          is_key = 1;
+        } else {
+          if (key != NULL) {
+            *key = malloc(event.data.scalar.length);
+            memcpy(*key, event.data.scalar.value, event.data.scalar.length);
+          }
+          is_key = 0;
+        }
+      break;
+      case YAML_SEQUENCE_START_EVENT:
+      break;
+      case YAML_SEQUENCE_END_EVENT:
+      break;
+      case YAML_MAPPING_START_EVENT:
+      break;
+      case YAML_MAPPING_END_EVENT:
+      break;
+      case YAML_STREAM_END_EVENT:
+        yaml_event_delete(&event);
+        return;
+      break;
+    }
+    yaml_event_delete(&event);
+  }
 }

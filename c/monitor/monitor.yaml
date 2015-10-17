@@ -1,0 +1,5 @@
+---                                 # Monitor configs
+working_mode        :   central     # Or distributed
+server_ip           :   127.0.0.1   # Important when in cental mode
+server_monitor_port :   5050
+...

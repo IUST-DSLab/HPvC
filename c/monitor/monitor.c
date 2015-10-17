@@ -210,7 +210,7 @@ void _setup_query_metrics() {
 void _get_metrics(HostMetric *metrics) {
   double res = 0;
   int *_data, i, j;
-  BSTR *names, ip, uuid;
+  BSTR *names, ip, uuid, *_units;
   char *name, *cip, *cuuid;
   ULONG data_length, metric_names_length, *_length, *_indices, *_scales, network_interfaces_length, machines_length = 0;
   IUnknown **_objects;
@@ -221,6 +221,7 @@ void _get_metrics(HostMetric *metrics) {
 
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_data, &data_length, data);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&names, &metric_names_length, metric_names);
+  g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_units, &metric_names_length, units);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_scales, &metric_names_length, scales);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_indices, &metric_names_length, indices);
   g_pVBoxFuncs->pfnSafeArrayCopyOutIfaceParamHelper((IUnknown ***)&_length, &metric_names_length, length);
@@ -231,8 +232,9 @@ void _get_metrics(HostMetric *metrics) {
     printf("===========================\n");
     printf("%d: %s\n", i, name);
     printf("data[i] = %d\n", _data[i]);
+    printf("unit: %s\n", _units[i]);
     printf("indices: %d - length: %d\n", _indices[i], _length[i]);
-    printf("%d\n", _scales[i]);
+    printf("scale: %d\n", _scales[i]);
     for (j=_indices[i]; j<_indices[i]+_length[i]; j++) {
       res += _data[j];
     }

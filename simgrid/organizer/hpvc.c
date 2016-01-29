@@ -32,8 +32,8 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 static int NUMBER_OF_VMS;
 static int NUMBER_OF_PROCESS;
 
-static int transmissionRate[100][100];
-static float transmissionLatency[100][100];
+int **transmissionRate;
+float **transmissionLatency;
 
 typedef enum HOST_ASSIGN_POLICY
 {
@@ -170,12 +170,21 @@ static int process_task(int argc, char* argv[])
 	if (error != MSG_OK)
 		XBT_INFO("Failed to execute task! %s\n", exec_name);
 
-	int ret = MSG_OK;
-	while ((ret = MSG_task_send(comm_task, target_mailbox_name)) != MSG_OK)
+	int ret = MSG_OK;		
+	msg_vm_t vmSender,vmReceiver;
+	vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
+	vmReceiver = xbt_dynar_get_as(vm_list[cluster_id],target_mailbox, msg_vm_t);
+	while ((ret = send_task(comm_task, target_mailbox_name,vmSender,vmReceiver)) != MSG_OK)
 	{
 		XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
 				target_mailbox_name);
 	}
+
+	// while ((ret = MSG_task_send(comm_task, 								target_mailbox_name)) != MSG_OK)
+	// {
+	// 	XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
+	// 			target_mailbox_name);
+	// }
 
 	double real_finish_time = MSG_get_clock();
 
@@ -764,6 +773,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 				process_argc,
 				process_argv);
 	}
+
 }
 
 static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
@@ -811,6 +821,33 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);
+
+	
+}
+
+// createing matrix to save organization data
+void create_organization_matrix(int no_vm)
+{
+	int i;
+	transmissionRate = (int**)malloc(sizeof(int*) * no_vm);
+	for (i = 0; i < no_vm; i++)
+		transmissionRate[i] = (int*)malloc(sizeof(int) * no_vm);
+
+	transmissionLatency = (float**)malloc(sizeof(float*) * no_vm);
+	for (i = 0; i < no_vm; i++)
+		transmissionLatency[i] = (float*)malloc(sizeof(float) * no_vm);
+}
+// deleting matrix that save organization data
+void delete_organization_matrix(int no_vm)
+{	
+	int i;
+	for (i = 0; i < no_vm; i++)
+	{
+		free(transmissionRate[i]);
+		free(transmissionLatency[i]);
+	}
+	free(transmissionRate);
+	free(transmissionLatency);
 }
 
 static void organization_manager(int argc, char* argv[])
@@ -880,7 +917,7 @@ int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_v
 {
 	// to simulate low latency of communicate between to VM on same PM, we add some const delay to all other 
 	// communicatoinns where sender and reciver are no colocated. In order to add this delay I do a dummy computing task 
-	int DUMMY_COMPUTING_TASK_FLOPS = 1e6;
+	int DUMMY_COMPUTING_TASK_FLOPS = 1e7 ;
 
 	msg_error_t retValue = MSG_OK;
 	double startTime = 0.f,endTime = 0.f;
@@ -955,6 +992,7 @@ int main(int argc, char *argv[])
 		max_guest_job[i] = 1; // to calculate load and marginalc cost-> I don't need it!
 		launch_master(NUMBER_OF_VMS, NUMBER_OF_PROCESS, i);
 	}
+	create_organization_matrix(NUMBER_OF_VMS);
 
 	// call regesterd function that described in deployment file with the parameter.
 	MSG_launch_application(argv[2]); // argv[2]: deployment.xml
@@ -967,6 +1005,7 @@ int main(int argc, char *argv[])
 		destroy_master(NUMBER_OF_VMS, NUMBER_OF_PROCESS, i);
 		vm_list[i] = NULL;
 	}
+	delete_organization_matrix(NUMBER_OF_VMS);
 
 	XBT_INFO("Simulation time %g\n", MSG_get_clock());
 

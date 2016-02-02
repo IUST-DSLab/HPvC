@@ -43,7 +43,7 @@ static float VM_DOWN_TIME_SERVICE = 1.f; // seconds
 
 typedef struct PMs_data
 {
-	char *PM_name;
+	const char *PM_name;
 	int numberOfVMs;
 	int VMs[PM_CAPACITY];
 }DATA_OF_PM;
@@ -99,6 +99,10 @@ static double memory_max;
 static double net_max;
 
 static int is_simulation_finished = 0;
+
+// declare functions signature
+int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_vm_t vmReceiver);
+void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index);
 
 // void_f_pvoid_t function to free double*
 void free_double(void* pointer)
@@ -443,15 +447,15 @@ static int guest_load_balance(int argc, char* argv[])
 }
 
 // TODO: Implement the reorganize according to communication overhead
-static int policy_func_min_comm()
-{
-	return 0;
-}
+// static int policy_func_min_comm()
+// {
+// 	return 0;
+// }
 
-static int policy_func_inhab_mig()
-{
-	return 0;
-}
+// static int policy_func_inhab_mig()
+// {
+// 	return 0;
+// }
 
 static int host_load_balance(int argc, char* argv[])
 {
@@ -461,7 +465,7 @@ static int host_load_balance(int argc, char* argv[])
 		return -1;
 	}
 
-	int cluster_id = atoi(argv[1]);
+	//int cluster_id = atoi(argv[1]);
 	host_assign_policy policy = atoi(argv[2]);
 
 	// A loop that checks every K (default is 60) seconds, the load imbalance of hosts of cluster to make decision
@@ -898,13 +902,13 @@ void delete_organization_matrix(int no_vm)
 	free(transmissionLatency);
 }
 
-static void organization_manager(int argc, char* argv[])
+static int organization_manager(int argc, char* argv[])
 {
 	// Ya Sattar
 	if (argc < 2)
 	{
 		XBT_INFO("Must pass organization period time\n");
-		return;
+		return 0;
 	}
 	int SLEEP_TIME = atoi(argv[1]);
 	// organizer just work on cluseter_id = 0;
@@ -1064,6 +1068,7 @@ static void organization_manager(int argc, char* argv[])
 		
 	}
 	printf("########### END OF ORGANIZATION ###########\n");
+	return 0;
 }
 
 void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
@@ -1080,9 +1085,7 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 		DATA_OF_PM data;
 		data = xbt_dynar_get_as(dataOfPMs[cluster_id],i,DATA_OF_PM);
 
-		msg_host_t tmp;
-		tmp = xbt_dynar_get_as(hosts_dynar,i,msg_host_t);
-		if( strcmp(data.PM_name,MSG_host_get_name(tmp) ) == 0) // we find the hostPM
+		if( strcmp(data.PM_name,MSG_host_get_name(hostPM) ) == 0) // we find the hostPM in the dataOfPMs array
 		{
 			// find vm_index in data.VMs
 			int j = 0;
@@ -1128,7 +1131,7 @@ int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_v
 	msg_error_t retValue = MSG_OK;
 	double startTime = 0.f,endTime = 0.f;
 
-	char *senderPM_name,*receiverPM_name;
+	const char *senderPM_name,*receiverPM_name;
 	senderPM_name = MSG_host_get_name(MSG_vm_get_pm(vmSender));
 	receiverPM_name = MSG_host_get_name(MSG_vm_get_pm(vmReceiver));
 

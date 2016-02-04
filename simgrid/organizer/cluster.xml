@@ -13,7 +13,7 @@
 <platform version="3">
 <AS  id="AS0"  routing="Cluster">
   <cluster id="my_cluster_1" prefix="c-" suffix=""
-  		radical="0-100"	power="1Gf"    bw="125MBps"     lat="50us"
+  		radical="0-20"	power="1Gf"    bw="125MBps"     lat="50us"
         bb_bw="2.25GBps" bb_lat="500us"/>
 </AS>
 </platform>

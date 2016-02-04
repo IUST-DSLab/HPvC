@@ -32,6 +32,7 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 #define MAX_VM_MEMORY 1e9
 #define MAX_VM_NET 1.25e8
 #define PM_CAPACITY 4
+#define IS_ENABLE_GUEST_LOAD_BALANCE 0
 
 const int INITIAL_TRANMISSION_RATE = 1;
 const float INITIAL_TRANMISSION_LATENCY = 0.006f; // it's the minimum and defalt latency based on curronet toppology 
@@ -200,7 +201,7 @@ static int process_task(int argc, char* argv[])
 				target_mailbox_name);
 	}
 
-	// while ((ret = MSG_task_send(comm_task, 								target_mailbox_name)) != MSG_OK)
+	// while ((ret = MSG_task_send(comm_task,target_mailbox_name)) != MSG_OK)
 	// {
 	// 	XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
 	// 			target_mailbox_name);
@@ -233,7 +234,7 @@ static int process_task(int argc, char* argv[])
 		XBT_INFO("fail to send fin message\n");
 
 
-	if (cluster_id == 0)
+	if (cluster_id == 0 &&  IS_ENABLE_GUEST_LOAD_BALANCE )
 	{
 		double* mem = (double*)malloc(sizeof(double));
 		*mem = - need.memory +
@@ -530,8 +531,8 @@ static int create_tasks(int argc, char* argv[])
 	char response_mailbox[NUMBER_OF_CLUSTERS][20];
 	//load_balance_response* response = NULL;
 
-	int cluster_id = 0;
-	for (; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
+	int cluster_id = 0 ;
+	for (; cluster_id < NUMBER_OF_CLUSTERS ; ++cluster_id)
 	{
 		sprintf(response_mailbox[cluster_id], "create_%d", cluster_id);
 		sprintf(load_balancer_mailbox[cluster_id], "load_balancer_mailbox_%d", cluster_id);
@@ -556,38 +557,50 @@ static int create_tasks(int argc, char* argv[])
 
 		compute_resource_need(rand_task, r, m, c, &need);
 
-		for ( cluster_id = 0; cluster_id < NUMBER_OF_CLUSTERS; ++cluster_id)
+		for (cluster_id = 0; cluster_id < NUMBER_OF_CLUSTERS ; ++cluster_id)
 		{
-			// Only first cluster does load balance 
-			if (cluster_id == 0) // here based on the type of task , load balancer decide about the home_vm to do the task.
+
+			if( IS_ENABLE_GUEST_LOAD_BALANCE )
 			{
-				rand();
+				// Only first cluster does load balance 
+				if (cluster_id == 0 ) // here based on the type of task , load balancer decide about the home_vm to do the task.
+				{
+					rand();
 
-				request->memory = need.memory;
-				request->net = need.memory;
-				request->task_number = i;
-				request->request = 0;
+					request->memory = need.memory;
+					request->net = need.memory;
+					request->task_number = i;
+					request->request = 0;
 
-				sprintf(req_name[cluster_id], "load_balancing_%d_%d", cluster_id, i);
-				msg_req = MSG_task_create(req_name[cluster_id], 0, sizeof(*request), request);
+					sprintf(req_name[cluster_id], "load_balancing_%d_%d", cluster_id, i);
+					msg_req = MSG_task_create(req_name[cluster_id], 0, sizeof(*request), request);
 
-				// Request-Response to load balancer
-				while (MSG_task_send(msg_req, load_balancer_mailbox[cluster_id]) != MSG_OK)
-					XBT_INFO("create task has just failed to send load balancing request of %d on %d\n", i,
-							cluster_id);
+					// Request-Response to load balancer
+					while (MSG_task_send(msg_req, load_balancer_mailbox[cluster_id]) != MSG_OK)
+						XBT_INFO("create task has just failed to send load balancing request of %d on %d\n", i,
+								cluster_id);
 
-				while (MSG_task_receive(&msg_res, response_mailbox[cluster_id]) != MSG_OK)
-					XBT_INFO("create task has just failed to receive load balancing response of %d on %d\n",
-							i, cluster_id);
+					while (MSG_task_receive(&msg_res, response_mailbox[cluster_id]) != MSG_OK)
+						XBT_INFO("create task has just failed to receive load balancing response of %d on %d\n",
+								i, cluster_id);
 
-				home_vm = ((load_balance_response*)MSG_task_get_data(msg_res))->target_host;
-				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
-			}
-			else
+					home_vm = ((load_balance_response*)MSG_task_get_data(msg_res))->target_host;
+					//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
+				}
+				else
+				{
+					home_vm = rand() % number_of_vms;
+					//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
+				}
+			} 
+			else // load balance is disable
 			{
-				home_vm = rand() % number_of_vms;
-				//XBT_INFO("cluster_id: %d , home vm: %d", cluster_id, home_vm);
+				if(cluster_id == 0)
+					home_vm = rand() % number_of_vms;
+				else
+					home_vm = home_vm; // previes value in cluster_id = 0;
 			}
+			
 
 			char process_name[40];
 			char** process_argv = xbt_new(char*, 9);
@@ -623,7 +636,7 @@ static int create_tasks(int argc, char* argv[])
 			// TODO: Adding resource consumption to vm  property and make the laod balancer 
 			// robust against its null value
 
-			if (cluster_id == 0)
+			if (cluster_id == 0 &&  IS_ENABLE_GUEST_LOAD_BALANCE )
 			{
 				double* mem = (double*)malloc(sizeof(double));
 				*mem = need.memory + *(double*)MSG_host_get_property_value(host, "mem");
@@ -691,7 +704,7 @@ static int get_finalize(int argc, char* argv[])
 				XBT_INFO("FAILURE in sending fin to VMs\n");
 		}
 
-		if (cluster_id == 0)
+		if (cluster_id == 0 && IS_ENABLE_GUEST_LOAD_BALANCE )
 		{
 			load_balance_request* fin_request = (load_balance_request*)malloc(sizeof(load_balance_request));
 			fin_request->request = 2;
@@ -747,12 +760,14 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 	cpu_max_flops = MSG_get_host_speed(*((msg_host_t*)xbt_dynar_get_ptr(MSG_hosts_as_dynar(), 0)));
 
 	int j = 0;
-	int host = 0;
+	int host = (cluster_id) * NUMBER_OF_INVOLVED_HOST;
+	int cuerrentCluster_host_counter = 0;
 	for (i = 0; i < no_vm; ++i, ++j)
 	{
 		if (j >= numberOfVM_perHost)
 		{
 			++host;
+			cuerrentCluster_host_counter++;
 			j = 0;
 		}
 
@@ -773,12 +788,12 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 
 		// save data of vm in it's pm
 		DATA_OF_PM data;
-		data = xbt_dynar_get_as(dataOfPMs[cluster_id],host,DATA_OF_PM);
+		data = xbt_dynar_get_as(dataOfPMs[cluster_id],cuerrentCluster_host_counter,DATA_OF_PM);
 
 		data.VMs[data.numberOfVMs] = i;
 		data.numberOfVMs++;
 		data.PM_name = MSG_host_get_name(pm);
-		xbt_dynar_set_as(dataOfPMs[cluster_id],host,DATA_OF_PM,data);
+		xbt_dynar_set_as(dataOfPMs[cluster_id],cuerrentCluster_host_counter,DATA_OF_PM,data);
 
 		// TODO: check if need to do it with strings
 		double* mem = (double*)malloc(sizeof(double));
@@ -792,7 +807,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 		MSG_vm_start(vm);
 	}
 
-	if (cluster_id == 0 )
+	if (cluster_id == 0  && IS_ENABLE_GUEST_LOAD_BALANCE )
 	{
 		int process_argc = 2;
 		char process_name[40];
@@ -846,15 +861,11 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 		expected = ((SlowDown*)xbt_dynar_get_ptr(slow_down[cluster_id], i))->expected_time;
 
 		slowdown = actual / expected;
-
-	//	printf("process: %d, slow down: %f, actual time: %f, expected time: %f\n",
-	//			i, slowdown, actual, expected);
-
 		mean_slowdown += slowdown;
 	}
 
 	mean_slowdown/=no_process;
-	printf("cluster: %d slow down is : %f\n", cluster_id, mean_slowdown);
+	printf("cluster: %d slow down is : %f with %d process and %d VMs.\n", cluster_id, mean_slowdown,no_process,no_vm);
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);
@@ -911,6 +922,14 @@ static int organization_manager(int argc, char* argv[])
 		return 0;
 	}
 	int SLEEP_TIME = atoi(argv[1]);
+	if(SLEEP_TIME < 0 ) // run without organizer
+	{
+		printf("########### RUN WITHOUT ORGANIZATION ############\n");
+		return 0;
+	}
+
+
+	int migrate_counter = 0;
 	// organizer just work on cluseter_id = 0;
 	int cluster_id = 0;
 	// for test, migrate 1 vm from first host to the last host.
@@ -988,14 +1007,6 @@ static int organization_manager(int argc, char* argv[])
 				candidateVM_index = i;
 			}
 		}
-
-	// 	// for(i = 0;i< NUMBER_OF_VMS;i++)
-	// 	// {
-			
-	// 	// 		if(H[i] > 0.f)
-	// 	// 			printf("H[%d]= %.3f ", i,H[i]);
-	// 	// }
-	// 	printf("\nmaximum H[i] is %.3f for vm %d \n",currentH,candidateVM_index);
 			
 	// calculating nextH by replacing currentH VM on all other PM.
 		// find a VM on each of ther PMs as that PMs agent
@@ -1003,7 +1014,6 @@ static int organization_manager(int argc, char* argv[])
 
 	// findig a VM that run on the given PM(i) and name it as agent!
 	
-
 
 	// calculating nextH[i]  for each PM
 	for(i = 0 ;i < NUMBER_OF_INVOLVED_HOST ;i++)
@@ -1040,10 +1050,6 @@ static int organization_manager(int argc, char* argv[])
 		}
 	}
 
-	// for(i = 0;i<NUMBER_OF_INVOLVED_HOST;i++)
-	// {
-	// 	printf("nextH[%d] if for PM %s = %.3f\n", sortetIndexNextH[i],MSG_host_get_name(xbt_dynar_get_as(hosts_dynar, sortetIndexNextH[i], msg_host_t)), nextH[sortetIndexNextH[i]]);
-	// }
 	for( i = 0;i<NUMBER_OF_INVOLVED_HOST;i++)
 	{
 		DATA_OF_PM data;
@@ -1054,19 +1060,21 @@ static int organization_manager(int argc, char* argv[])
 			//migrate candidateVM_index to targetPM_index;
 			msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
 			msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar, sortetIndexNextH[i], msg_host_t);
-			printf("migrating vm %s from PM %d:%s to PM %d%s\n",MSG_host_get_name(vm),
-					0,MSG_host_get_name(MSG_vm_get_pm(vm)),
-					sortetIndexNextH[i],MSG_host_get_name(targetPM));
+			// printf("migrating vm %s from PM %d:%s to PM %d%s\n",MSG_host_get_name(vm),
+			// 		0,MSG_host_get_name(MSG_vm_get_pm(vm)),
+			// 		sortetIndexNextH[i],MSG_host_get_name(targetPM));
 
 			//MSG_vm_migrate(vm,targetPM);
 			migrate_vm(vm,candidateVM_index,targetPM,sortetIndexNextH[i]);
-			printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
-				 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
+			migrate_counter++;
+			// printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
+			// 	 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
 			break;
 		}
 	}
 		
 	}
+	printf("number of migration is %d\n",migrate_counter );
 	printf("########### END OF ORGANIZATION ###########\n");
 	return 0;
 }
@@ -1124,10 +1132,6 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 
 int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_vm_t vmReceiver)
 {
-	// to simulate low latency of communicate between to VM on same PM, we add some const delay to all other 
-	// communicatoinns where sender and reciver are no colocated. In order to add this delay I do a dummy computing task 
-	int DUMMY_COMPUTING_TASK_FLOPS = 1e7 ;
-
 	msg_error_t retValue = MSG_OK;
 	double startTime = 0.f,endTime = 0.f;
 
@@ -1136,14 +1140,25 @@ int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_v
 	receiverPM_name = MSG_host_get_name(MSG_vm_get_pm(vmReceiver));
 
 	startTime = MSG_get_clock();
-	if( strcmp(senderPM_name,receiverPM_name) != 0 ) // PMs are different, So make some dummy computing task
+
+	// new way to make dummy delay
+	if( strcmp(senderPM_name,receiverPM_name) == 0 )// PMs are same, So just destroy task as simulation of sending it to colocated VM.
 	{
-		// printf("senderPM %s\t receiverPM %s\n",senderPM_name,receiverPM_name );
-		msg_task_t executive_task = MSG_task_create("computing task",DUMMY_COMPUTING_TASK_FLOPS,0,NULL);
-		MSG_task_execute(executive_task);
+		double task_size = MSG_task_get_bytes_amount(task);
+		double TIMEOUT = GetTimeout(task_size,net_max,NUMBER_OF_VMS/NUMBER_OF_INVOLVED_HOST);
+		//printf("timeout = %lf\n",TIMEOUT );
+		retValue =  MSG_task_send_with_timeout(task,mailBoxName,TIMEOUT);
+		if( retValue == MSG_TIMEOUT ) // could not send msg and timeout accured!
+		{
+			MSG_task_destroy(task);
+			retValue = MSG_OK;
+		}
+	} 
+	else
+	{
+	 	retValue =  MSG_task_send(task,mailBoxName);
 	}
 
-	retValue =  MSG_task_send(task,mailBoxName);
 	endTime = MSG_get_clock();
 
 	if( retValue == MSG_OK) // gathering data
@@ -1191,10 +1206,9 @@ int main(int argc, char *argv[])
 	NUMBER_OF_VMS =  atoi(argv[3]);
 	NUMBER_OF_PROCESS = atoi(argv[4]);
 
-	// :|
-	NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar)-1) / NUMBER_OF_CLUSTERS;
-	//total_cluster_host = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS;
-
+	
+	NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS ;
+	printf("NUMBER_OF_INVOLVED_HOST=%d\n",NUMBER_OF_INVOLVED_HOST);
 	//NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1); // minous one is for 1 master host that create and manage cluster (c-52).
 
 	int i = 0;

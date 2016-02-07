@@ -9,5 +9,6 @@
 	</process>
 	<process host="c-20" function="organization_manager">
 		<argument value="100"/>		<!-- organizatin period time in simulation time -->
+		<argument value="4.0"/> 	<!-- VM_DOWN_TIME_SERVICE in Seconds -->
 	</process>
 </platform>

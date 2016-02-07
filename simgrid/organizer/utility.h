@@ -1,3 +1,7 @@
+#ifndef __UTILITY_H__
+#define __UTILITY_H__
+
+#include "structures.h"
 
 void RemoveItemFromArray(int index,int* array,int arraySize )
 {
@@ -56,7 +60,18 @@ double GetTimeout(double task_size,double MAXIMUM_TASK_SIZE,int NUMBER_OF_VM_PER
 	double TIMEOUT = host_to_hot_delay  * collocateVM_reduce_delay_ratio;
 	return TIMEOUT;
 }
-
+void PrintDataOfPM(DATA_OF_PM data)
+{
+	printf("#####DATA_OF_PM#####\n");
+	printf("PM Name:%s\n",data.PM_name);
+	printf("numberOfVms = %d\n",data.numberOfVMs );
+	int i = 0;
+	for(i = 0;i<data.numberOfVMs;i++)
+	{
+		printf("vm[%d]=%d\t", i,data.VMs[i]);
+	}
+	printf("\n#####DATA_OF_PM#####\n");
+}
 ////////////////////////////////////////////////////////////////////////////////
 /* testing send a message form vm to located vm and other vm
 int q;
@@ -85,3 +100,5 @@ int q;
 	}
 
 */
+
+#endif // __UTILITY_H__

@@ -72,6 +72,10 @@ void PrintDataOfPM(DATA_OF_PM data)
 	}
 	printf("\n#####DATA_OF_PM#####\n");
 }
+int GetNextTargetMailBox(int mailBoxID,int ProcessSequenceNumber,int nu_vm)
+{
+	return (mailBoxID + ProcessSequenceNumber)%nu_vm;
+}
 ////////////////////////////////////////////////////////////////////////////////
 /* testing send a message form vm to located vm and other vm
 int q;

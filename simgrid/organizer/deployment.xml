@@ -1,14 +1,14 @@
 <?xml version='1.0'?>
 <!DOCTYPE platform SYSTEM "http://simgrid.gforge.inria.fr/simgrid.dtd">
 <platform version="3">
-	<process host="c-20" function="create_tasks">
+	<process host="c-20.me" function="create_tasks">
 		<argument value="777545"/>		<!-- time_seed -->
 		<argument value="0.7"/>			<!-- process_arrival_rate -->
 	</process>
-	<process host="c-20" function="get_finalize">
+	<process host="c-20.me" function="get_finalize">
 	</process>
-	<process host="c-20" function="organization_manager">
+	<process host="c-20.me" function="organization_manager">
 		<argument value="100"/>		<!-- organizatin period time in simulation time -->
-		<argument value="4.0"/> 	<!-- VM_DOWN_TIME_SERVICE in Seconds -->
+		<argument value="30"/> 	<!-- VM_DOWN_TIME_SERVICE in Seconds -->
 	</process>
 </platform>

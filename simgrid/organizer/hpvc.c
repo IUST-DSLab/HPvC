@@ -37,7 +37,8 @@ const int ITERATION_PER_PROCESS = 10;  // number of job done in each task
 static int NUMBER_OF_VMS;
 static int NUMBER_OF_PROCESS;
 static int NUMBER_OF_INVOLVED_HOST;
-static float VM_DOWN_TIME_SERVICE ; // seconds
+static float VM_DOWN_TIME_SERVICE_SAME_CLUSTER; // seconds
+static float VM_DOWN_TIME_SERVICE_OTHER_CLUSTER; // seconds
 
 
 static xbt_dynar_t dataOfPMs[NUMBER_OF_CLUSTERS];
@@ -164,7 +165,7 @@ static int process_task(int argc, char* argv[])
 			msg_vm_t vmSender,vmReceiver;
 			vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
 
-			if( 1 /*i%2*/ )
+			if( i%2 )
 			{
 				vmReceiver = xbt_dynar_get_as(vm_list[cluster_id],target_mailbox, msg_vm_t);
 			}
@@ -949,11 +950,12 @@ static int organization_manager(int argc, char* argv[])
 	// }
 
 	// Ya Sattar
-	if (argc < 3)
+	if (argc < 4)
 	{
 		XBT_INFO("Must pass:\n\
 				organization period time\n\
-				VM_DOWN_TIME_SERVICE\n");
+				VM_DOWN_TIME_SERVICE_SAME_CLUSTER\n\
+				VM_DOWN_TIME_SERVICE_OTHER_CLUSTER");
 		return 0;
 	}
 	int SLEEP_TIME = atoi(argv[1]);
@@ -962,8 +964,10 @@ static int organization_manager(int argc, char* argv[])
 		printf("########### RUN WITHOUT ORGANIZATION ############\n");
 		return 0;
 	}
-	VM_DOWN_TIME_SERVICE = atof(argv[2]);
-	printf("VM_DOWN_TIME_SERVICE=%f\n",VM_DOWN_TIME_SERVICE);
+	VM_DOWN_TIME_SERVICE_SAME_CLUSTER = atof(argv[2]);
+	printf("VM_DOWN_TIME_SERVICE_SAME_CLUSTER=%f\n",VM_DOWN_TIME_SERVICE_SAME_CLUSTER);
+	VM_DOWN_TIME_SERVICE_OTHER_CLUSTER = atof(argv[3]);
+	printf("VM_DOWN_TIME_SERVICE_OTHER_CLUSTER=%f\n",VM_DOWN_TIME_SERVICE_OTHER_CLUSTER);
 
 	int migrate_counter = 0;
 	// organizer just work on cluseter_id = 0;
@@ -987,6 +991,16 @@ static int organization_manager(int argc, char* argv[])
 	for (i = 0; i < NUMBER_OF_VMS; i++)
 		tmpTransmissionLatency[i] = (float*)malloc(sizeof(float) * NUMBER_OF_VMS);
 
+	// init tmpMatrixes
+	for( i = 0;i<NUMBER_OF_VMS;i++)
+		{
+			for(j = 0;j<NUMBER_OF_VMS;j++)
+			{
+				tmpTransmissionRate[i][j] = INITIAL_TRANMISSION_RATE;
+				tmpTransmissionLatency[i][j] =  INITIAL_TRANMISSION_LATENCY;
+			}
+		}
+
 
 	for(; !is_simulation_finished ;)
 	{
@@ -997,8 +1011,12 @@ static int organization_manager(int argc, char* argv[])
 		{
 			for(j = 0;j<NUMBER_OF_VMS;j++)
 			{
-				tmpTransmissionRate[i][j] = transmissionRate[i][j];
-				tmpTransmissionLatency[i][j] =  transmissionLatency[i][j];
+				tmpTransmissionRate[i][j] = (ALPHA * tmpTransmissionRate[i][j]) + ((1 - ALPHA ) * transmissionRate[i][j]);
+				//tmpTransmissionRate[i][j] = ( transmissionRate[i][j]);
+
+				tmpTransmissionLatency[i][j] =  (ALPHA * tmpTransmissionLatency[i][j]) + ((1 - ALPHA ) * transmissionLatency[i][j]);
+				//tmpTransmissionLatency[i][j] =  ( transmissionLatency[i][j]);
+
 
 				// clear original matrix to next period 
 				transmissionRate[i][j] = INITIAL_TRANMISSION_RATE;
@@ -1007,13 +1025,13 @@ static int organization_manager(int argc, char* argv[])
 		}
 	
 		// calculate AvgLetancy
-		for(i = 0;i<NUMBER_OF_VMS;i++)
-		{
-			for(j = 0;j<NUMBER_OF_VMS;j++)
-			{
-				tmpTransmissionLatency[i][j] /= tmpTransmissionRate[i][j];
-			}
-		}
+		// for(i = 0;i<NUMBER_OF_VMS;i++)
+		// {
+		// 	for(j = 0;j<NUMBER_OF_VMS;j++)
+		// 	{
+		// 		tmpTransmissionLatency[i][j] /= tmpTransmissionRate[i][j];
+		// 	}
+		// }
 		
 
 		// reseting H and nextH for current period
@@ -1111,18 +1129,27 @@ static int organization_manager(int argc, char* argv[])
 	}
 
 
-
+	float VM_DOWN_TIME_SERVICE = 0.f;
+	int homPM_index = -1;
 
 	for( i = 0;i<NUMBER_OF_INVOLVED_HOST;i++)
 	{
 		DATA_OF_PM data;
 		data = xbt_dynar_get_as(dataOfPMs[cluster_id],sortetIndexNextH[i],DATA_OF_PM);
 
+		msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
+
+		// find if sender and reciever are in the same cluster?
+		sscanf(MSG_host_get_name(MSG_vm_get_pm(vm)),"c-%d.me",&homPM_index);
+		if( (homPM_index < 10 && sortetIndexNextH[i] < 10) || (homPM_index > 10 && sortetIndexNextH[i] > 10) )
+			VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_SAME_CLUSTER;
+		else
+			VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_OTHER_CLUSTER;
+
 		if( data.numberOfVMs < PM_CAPACITY &&
 			 (nextH[sortetIndexNextH[i]] + VM_DOWN_TIME_SERVICE) < currentH )
 		{
 			//migrate candidateVM_index to targetPM_index;
-			msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
 			msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar, sortetIndexNextH[i], msg_host_t);
 			if(strcmp(MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM)) == 0)
 			{
@@ -1136,7 +1163,7 @@ static int organization_manager(int argc, char* argv[])
 			}
 			else
 			{
-				int homPM_index =0;
+				homPM_index =0;
 				for(j = 0;j< NUMBER_OF_INVOLVED_HOST;j++)
 				{
 					DATA_OF_PM data;
@@ -1263,7 +1290,14 @@ int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_v
 		sscanf(MSG_host_get_name(vmReceiver),"vm_%d_%d",&clusterID,&receiverID);
 		if(clusterID == 0)
 		{
-			transmissionLatency[senderID][receiverID] += (endTime - startTime);
+			// transmissionLatency[senderID][receiverID] += (endTime - startTime);
+			// transmissionRate[senderID][receiverID] += 1;
+
+			float oldAvg = transmissionLatency[senderID][receiverID];
+			int oldRate = transmissionRate[senderID][receiverID];
+
+			// calculating new avarege for transmissionLatency
+			transmissionLatency[senderID][receiverID] = ( (oldAvg * oldRate) + (endTime - startTime) )/(oldRate + 1);
 			transmissionRate[senderID][receiverID] += 1;
 		}
 		
@@ -1328,7 +1362,10 @@ int main(int argc, char *argv[])
 	}
 	delete_organization_matrix(NUMBER_OF_VMS);
 
-	//XBT_INFO("Simulation time %g\n", MSG_get_clock());
+	if (res == MSG_OK)
+		printf("Simulation Finished successfully :)\n");
+	else
+		printf("Simulation Failed :(\n");
 	printf("Simulation Time: %g\n", MSG_get_clock());
 
 	if (res == MSG_OK)

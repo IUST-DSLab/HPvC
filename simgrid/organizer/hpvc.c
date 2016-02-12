@@ -40,6 +40,10 @@ static int NUMBER_OF_INVOLVED_HOST;
 static float VM_DOWN_TIME_SERVICE_SAME_CLUSTER; // seconds
 static float VM_DOWN_TIME_SERVICE_OTHER_CLUSTER; // seconds
 
+static int migrate_counter = 0;
+static msg_process_t ORGANIZER_PROCESS;
+static int is_organizer_running = 0;
+
 
 static xbt_dynar_t dataOfPMs[NUMBER_OF_CLUSTERS];
 
@@ -58,7 +62,7 @@ static double cpu_max_flops;
 static double memory_max;
 static double net_max;
 
-static int is_simulation_finished = 0;
+
 
 // declare functions signature
 int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_vm_t vmReceiver);
@@ -144,6 +148,19 @@ static int process_task(int argc, char* argv[])
 	int compTaskSize = COMP_PER_COMM * ITERATION_PER_PROCESS, p = 0;
 	int commTaskSize = (1-COMP_PER_COMM) * ITERATION_PER_PROCESS, n = 0;
 
+	// if(process_sequence == 107 )
+	// {
+	// 	printf("homeVM:%d targetVM:%d\n",home_vm,target_mailbox);
+	// 	msg_vm_t vmSender;
+	// 	vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
+	// 	if(MSG_vm_is_migrating(vmSender))
+	// 	{
+	// 		i = ITERATION_PER_PROCESS;
+	// 		printf("vm is migrating so break\n");
+	// 	}
+	// 	else
+	// 		i = 0;
+	// }
 	while(i < ITERATION_PER_PROCESS )
 	{
 		if( p < compTaskSize )
@@ -164,6 +181,11 @@ static int process_task(int argc, char* argv[])
 
 			msg_vm_t vmSender,vmReceiver;
 			vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
+			// while (MSG_vm_is_migrating(vmSender))
+			// {
+			// 	printf("vm%d is migrating, so sleep 1\n",home_vm );
+			// 	sleep(1);
+			// }
 
 			if( i%2 )
 			{
@@ -176,7 +198,7 @@ static int process_task(int argc, char* argv[])
 			}
 
 			sprintf(target_mailbox_name, "mailbox_%d_%d", cluster_id, target_mailbox);
-			while ((ret = send_task(comm_task, target_mailbox_name,vmSender,vmReceiver)) != MSG_OK)
+			while ( (ret = send_task(comm_task, target_mailbox_name,vmSender,vmReceiver)) != MSG_OK)
 			{
 				XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
 						target_mailbox_name);
@@ -292,17 +314,19 @@ static int process_mailbox(int argc, char* argv[])
 	int mailbox_no = atoi(argv[1]);
 	int cluster_id = atoi(argv[2]);
 	char mailbox_id[40];
-	msg_task_t r_msg = NULL;
+	
 
 	sprintf(mailbox_id, "mailbox_%d_%d", cluster_id, mailbox_no);
 
 	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
 	while (1)
 	{
+		msg_task_t r_msg = NULL;
 		int ret = MSG_OK;
 		while ((ret = MSG_task_receive(&r_msg, mailbox_id)) != MSG_OK)
 		{
-			XBT_INFO("FAIL to receive on mailbox: %s\n", mailbox_id);
+			if(ret != MSG_TIMEOUT )
+				XBT_INFO("FAIL to receive on mailbox: %s\n", mailbox_id);
 		}
 
 		char* data = MSG_task_get_data(r_msg);
@@ -740,7 +764,13 @@ static int get_finalize(int argc, char* argv[])
 	}
 
 	MSG_process_sleep(10);
-	is_simulation_finished = 1;
+	if( is_organizer_running )
+	{
+		MSG_process_kill(ORGANIZER_PROCESS);
+		printf("number of migration is %d\n",migrate_counter );
+		printf("########### END OF ORGANIZATION ###########\n");
+	}
+	printf("############### SIMULATAION_FINISHED ###################\n");
 	return 0;
 }
 
@@ -801,6 +831,7 @@ static void launch_master(unsigned no_vm, int no_process, int cluster_id)
 		s_vm_params_t params;
     	memset(&params, 0, sizeof(params));
     	params.ramsize = ramsize;
+    	params.max_downtime = 1 ; // 1 second
 
 		// create a VM object. A VM object is like a Host and it's name must be unique among all of the hosts.
 		msg_vm_t vm = MSG_vm_create_core(pm, vm_name);
@@ -888,7 +919,7 @@ static void destroy_master(unsigned no_vm, int no_process, int cluster_id)
 	}
 
 	mean_slowdown/=no_process;
-	printf("cluster: %d slow down is : %f with %d process and %d VMs.\n", cluster_id, mean_slowdown,no_process,no_vm);
+	printf("cluster: %d slow down is : %f\n", cluster_id, mean_slowdown);
 	// Use information before free
 	xbt_dynar_remove_n_at(slow_down[cluster_id], no_process, 0);
 	xbt_dynar_free(&slow_down[cluster_id]);
@@ -938,17 +969,52 @@ void delete_organization_matrix(int no_vm)
 
 static int organization_manager(int argc, char* argv[])
 {
-	// int debug = 0, clusterID = 0;
-	// for(clusterID = 0;clusterID < NUMBER_OF_CLUSTERS;clusterID++)
+	// test with './hpvc ../cluster2.xml ../deploymentOn.xml 40 108 2>error' to make bug!! :(
 	// {
-	// 	printf("ClusterID=%d\n",clusterID);
-	// 	for( debug = 0;debug < NUMBER_OF_INVOLVED_HOST;debug++)
-	// 	{
-	// 		DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[clusterID],debug,DATA_OF_PM);
-	// 		printf("\tPM[%d]=%s\n",debug,data.PM_name);
-	// 	}
+	// 	msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],6,msg_vm_t);
+	// 	msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,1,msg_host_t);
+	// 	migrate_vm(vm,6,targetPM,1);
+	// }
+	// int dd = 0;
+	// for( dd = 0;dd < 3; dd++)
+	// {
+	// 	DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],1,DATA_OF_PM);
+	// 	PrintDataOfPM(data);
+
+	// 	msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],data.VMs[0],msg_vm_t);
+	// 	msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,7,msg_host_t);
+
+	// 	migrate_vm(vm,data.VMs[0],targetPM,7);
+
 	// }
 
+	// int haha = 10;
+	// int ha;
+	// for( ha = 0 ; ha < haha ;ha++)
+	// {
+	// 	// migrate 0 to it!
+	// 	{
+	// 		msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],0,msg_vm_t);
+	// 		msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,1,msg_host_t);
+
+	// 		migrate_vm(vm,0,targetPM,1);
+	// 		migrate_counter++;
+	// 		DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],1,DATA_OF_PM);
+	// 		printf("migrate_counter=%d numberOfVMs[%d]=%d\n", migrate_counter,1,data.numberOfVMs);
+	// 	}
+	// 	// migrate 0 from it!
+	// 	{
+	// 		msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],0,msg_vm_t);
+	// 		msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,0,msg_host_t);
+
+	// 		migrate_vm(vm,0,targetPM,0);
+	// 		migrate_counter++;
+	// 		DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],1,DATA_OF_PM);
+	// 		printf("migrate_counter=%d numberOfVMs[%d]=%d\n", migrate_counter,1,data.numberOfVMs);
+	// 	}
+	// }
+	// return 0;
+	
 	// Ya Sattar
 	if (argc < 4)
 	{
@@ -961,15 +1027,17 @@ static int organization_manager(int argc, char* argv[])
 	int SLEEP_TIME = atoi(argv[1]);
 	if(SLEEP_TIME < 0 ) // run without organizer
 	{
+		is_organizer_running = 0;
 		printf("########### RUN WITHOUT ORGANIZATION ############\n");
 		return 0;
 	}
+	is_organizer_running = 1;
 	VM_DOWN_TIME_SERVICE_SAME_CLUSTER = atof(argv[2]);
-	printf("VM_DOWN_TIME_SERVICE_SAME_CLUSTER=%f\n",VM_DOWN_TIME_SERVICE_SAME_CLUSTER);
+	//printf("VM_DOWN_TIME_SERVICE_SAME_CLUSTER=%f\n",VM_DOWN_TIME_SERVICE_SAME_CLUSTER);
 	VM_DOWN_TIME_SERVICE_OTHER_CLUSTER = atof(argv[3]);
-	printf("VM_DOWN_TIME_SERVICE_OTHER_CLUSTER=%f\n",VM_DOWN_TIME_SERVICE_OTHER_CLUSTER);
+	//printf("VM_DOWN_TIME_SERVICE_OTHER_CLUSTER=%f\n",VM_DOWN_TIME_SERVICE_OTHER_CLUSTER);
+	ORGANIZER_PROCESS = MSG_process_self();
 
-	int migrate_counter = 0;
 	// organizer just work on cluseter_id = 0;
 	int cluster_id = 0;
 	// for test, migrate 1 vm from first host to the last host.
@@ -1002,10 +1070,9 @@ static int organization_manager(int argc, char* argv[])
 		}
 
 
-	for(; !is_simulation_finished ;)
-	{
+	for(; ; )
+	{	
 	 	MSG_process_sleep(SLEEP_TIME); // the sleep time is in simulation time!
-
 		// copy original matrix to tmp
 		for( i = 0;i<NUMBER_OF_VMS;i++)
 		{
@@ -1053,7 +1120,6 @@ static int organization_manager(int argc, char* argv[])
 				// }
 			}
 		}
-
 		// find maximum H and name it as currentH
 		float currentH  = 0.f;
 		int candidateVM_index = 0;
@@ -1066,138 +1132,140 @@ static int organization_manager(int argc, char* argv[])
 			}
 		}
 			
-	// calculating nextH by replacing currentH VM on all other PM.
-		// find a VM on each of ther PMs as that PMs agent
+		// calculating nextH by replacing currentH VM on all other PM.
+			// find a VM on each of ther PMs as that PMs agent
+			
+
+		// findig a VM that run on the given PM(i) and name it as agent!
 		
 
-	// findig a VM that run on the given PM(i) and name it as agent!
-	
-
-	// calculating nextH[i]  for each PM
-	for(i = 0 ;i < NUMBER_OF_INVOLVED_HOST ;i++)
-	{
-		DATA_OF_PM data;
-		data = xbt_dynar_get_as(dataOfPMs[cluster_id],i,DATA_OF_PM);
-		for(j = 0 ;j< NUMBER_OF_VMS;j++)
+		// calculating nextH[i]  for each PM
+		for(i = 0 ;i < NUMBER_OF_INVOLVED_HOST ;i++)
 		{
-				int k = 0;
-				int agent = data.VMs[k]; // we soppose the first vm on each PM as agent!
-				float avg_host_to_j = 0.f , avg_j_to_host = 0.f;
-				for( k = 0; k < data.numberOfVMs ; k++)
+			DATA_OF_PM data;
+			data = xbt_dynar_get_as(dataOfPMs[cluster_id],i,DATA_OF_PM);
+			for(j = 0 ;j< NUMBER_OF_VMS;j++)
+			{
+					int k = 0;
+					int agent = data.VMs[k]; // we soppose the first vm on each PM as agent!
+					float avg_host_to_j = 0.f , avg_j_to_host = 0.f;
+					for( k = 0; k < data.numberOfVMs ; k++)
+					{
+						agent = data.VMs[k];
+						avg_host_to_j += tmpTransmissionLatency[agent][j];
+						avg_j_to_host += tmpTransmissionLatency[j][agent];
+					}
+					if( data.numberOfVMs > 0)
+					{
+						avg_host_to_j /= data.numberOfVMs;
+						avg_j_to_host /= data.numberOfVMs;
+					}
+					else
+					{
+						avg_host_to_j = INITIAL_TRANMISSION_LATENCY;
+						avg_j_to_host = INITIAL_TRANMISSION_LATENCY;
+					}
+					nextH[i] += (tmpTransmissionRate[candidateVM_index][j] * avg_host_to_j);
+					nextH[i] += (tmpTransmissionRate[j][candidateVM_index] * avg_j_to_host);
+
+			}
+		}
+
+		// sort nextH from minimum to maximum
+		int sortetIndexNextH[NUMBER_OF_INVOLVED_HOST];
+		for (i = 0; i < NUMBER_OF_INVOLVED_HOST; i++)
+		{
+			sortetIndexNextH[i] = i;
+		}
+
+
+		// sort nextH in a new array based on nextH index
+		int c, d;
+		float swap = 0.f;
+		for (c = 0; c < (NUMBER_OF_INVOLVED_HOST - 1); c++)
+		{
+			for (d = 0; d < NUMBER_OF_INVOLVED_HOST - c - 1; d++)
+			{
+				if (nextH[sortetIndexNextH[d]] > nextH[sortetIndexNextH[d+1]] ) /* For decreasing order use < */
 				{
-					agent = data.VMs[k];
-					avg_host_to_j += tmpTransmissionLatency[agent][j];
-					avg_j_to_host += tmpTransmissionLatency[j][agent];
+					swap = sortetIndexNextH[d];
+					sortetIndexNextH[d] = sortetIndexNextH[d + 1];
+					sortetIndexNextH[d + 1] = swap;
 				}
-				if( data.numberOfVMs > 0)
+			}
+		}
+
+		float VM_DOWN_TIME_SERVICE = 0.f;
+		int homPM_index = -1;
+
+		for( i = 0;i<NUMBER_OF_INVOLVED_HOST;i++)
+		{
+			DATA_OF_PM data;
+			data = xbt_dynar_get_as(dataOfPMs[cluster_id],sortetIndexNextH[i],DATA_OF_PM);
+
+			msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
+
+			// find if sender and reciever are in the same cluster?
+			sscanf(MSG_host_get_name(MSG_vm_get_pm(vm)),"c-%d.me",&homPM_index);
+			if( (homPM_index < 10 && sortetIndexNextH[i] < 10) || (homPM_index > 10 && sortetIndexNextH[i] > 10) )
+				VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_SAME_CLUSTER;
+			else
+				VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_OTHER_CLUSTER;
+
+			if( data.numberOfVMs < PM_CAPACITY &&
+				 (nextH[sortetIndexNextH[i]] + VM_DOWN_TIME_SERVICE) < currentH )
+			{
+				
+				//migrate candidateVM_index to targetPM_index;
+				msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar, sortetIndexNextH[i], msg_host_t);
+				if(strcmp(MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM)) == 0)
 				{
-					avg_host_to_j /= data.numberOfVMs;
-					avg_j_to_host /= data.numberOfVMs;
+					printf("###########WARNING_START###########\n");
+					printf("migrate candidate vm_%d(%s) from PM %s to PM %s\n",candidateVM_index,MSG_host_get_name(vm),
+						MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM));
+
+						printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
+							 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
+					printf("###########WARNING_END##########\n");
 				}
 				else
 				{
-					avg_host_to_j = INITIAL_TRANMISSION_LATENCY;
-					avg_j_to_host = INITIAL_TRANMISSION_LATENCY;
-				}
-				nextH[i] += (tmpTransmissionRate[candidateVM_index][j] * avg_host_to_j);
-				nextH[i] += (tmpTransmissionRate[j][candidateVM_index] * avg_j_to_host);
-
-		}
-	}
-	
-	// sort nextH from minimum to maximum
-	int sortetIndexNextH[NUMBER_OF_INVOLVED_HOST];
-	for (i = 0; i < NUMBER_OF_INVOLVED_HOST; i++)
-	{
-		sortetIndexNextH[i] = i;
-	}
-
-	// sort nextH in a new array based on nextH index
-	int c, d;
-	float swap = 0.f;
-	for (c = 0; c < (NUMBER_OF_INVOLVED_HOST - 1); c++)
-	{
-		for (d = 0; d < NUMBER_OF_INVOLVED_HOST - c - 1; d++)
-		{
-			if (nextH[sortetIndexNextH[d]] > nextH[sortetIndexNextH[d+1]] ) /* For decreasing order use < */
-			{
-				swap = sortetIndexNextH[d];
-				sortetIndexNextH[d] = sortetIndexNextH[d + 1];
-				sortetIndexNextH[d + 1] = swap;
-			}
-		}
-	}
-
-
-	float VM_DOWN_TIME_SERVICE = 0.f;
-	int homPM_index = -1;
-
-	for( i = 0;i<NUMBER_OF_INVOLVED_HOST;i++)
-	{
-		DATA_OF_PM data;
-		data = xbt_dynar_get_as(dataOfPMs[cluster_id],sortetIndexNextH[i],DATA_OF_PM);
-
-		msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
-
-		// find if sender and reciever are in the same cluster?
-		sscanf(MSG_host_get_name(MSG_vm_get_pm(vm)),"c-%d.me",&homPM_index);
-		if( (homPM_index < 10 && sortetIndexNextH[i] < 10) || (homPM_index > 10 && sortetIndexNextH[i] > 10) )
-			VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_SAME_CLUSTER;
-		else
-			VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_OTHER_CLUSTER;
-
-		if( data.numberOfVMs < PM_CAPACITY &&
-			 (nextH[sortetIndexNextH[i]] + VM_DOWN_TIME_SERVICE) < currentH )
-		{
-			//migrate candidateVM_index to targetPM_index;
-			msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar, sortetIndexNextH[i], msg_host_t);
-			if(strcmp(MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM)) == 0)
-			{
-				printf("###########WARNING_START###########\n");
-				printf("migrate candidate vm_%d(%s) from PM %s to PM %s\n",candidateVM_index,MSG_host_get_name(vm),
-					MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM));
-
-					printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
-						 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
-				printf("###########WARNING_END##########\n");
-			}
-			else
-			{
-				homPM_index =0;
-				for(j = 0;j< NUMBER_OF_INVOLVED_HOST;j++)
-				{
-					DATA_OF_PM data;
-					data = xbt_dynar_get_as(dataOfPMs[cluster_id],j,DATA_OF_PM);
-
-					if( strcmp(data.PM_name,MSG_host_get_name(MSG_vm_get_pm(vm)) ) == 0) // we find the hostPM in the dataOfPMs array
+					homPM_index =0;
+					for(j = 0;j< NUMBER_OF_INVOLVED_HOST;j++)
 					{
-						homPM_index = j;
-						break;
+						DATA_OF_PM data;
+						data = xbt_dynar_get_as(dataOfPMs[cluster_id],j,DATA_OF_PM);
+
+						if( strcmp(data.PM_name,MSG_host_get_name(MSG_vm_get_pm(vm)) ) == 0) // we find the hostPM in the dataOfPMs array
+						{
+							homPM_index = j;
+							break;
+						}
 					}
+
+					printf("%d) migrating %s from %s to %s cause nextH[%d]=%.3f < currentH=%.3f\n",migrate_counter+1,
+						MSG_host_get_name(vm),MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM),sortetIndexNextH[i],nextH[sortetIndexNextH[i]],currentH);
+
+					// printf("migrating %s from PM[%d] to PM[%d] cause nextH[%d]=%.3f < currentH=%.3f\n",
+					// 	MSG_host_get_name(vm),homPM_index,sortetIndexNextH[i],sortetIndexNextH[i],nextH[sortetIndexNextH[i]],currentH);
+
+					// printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
+					// 		 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
 				}
 
-				printf("migrating %s from %s to %s cause nextH[%d]=%.3f < currentH=%.3f\n",
-					MSG_host_get_name(vm),MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM),sortetIndexNextH[i],nextH[sortetIndexNextH[i]],currentH);
-
-				// printf("migrating %s from PM[%d] to PM[%d] cause nextH[%d]=%.3f < currentH=%.3f\n",
-				// 	MSG_host_get_name(vm),homPM_index,sortetIndexNextH[i],sortetIndexNextH[i],nextH[sortetIndexNextH[i]],currentH);
-
+				migrate_vm(vm,candidateVM_index,targetPM,sortetIndexNextH[i]);
+				if(migrate_counter == 35)
+					printf("migration 36 done!\n");
+				migrate_counter++;
 				// printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
-				// 		 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
+				// 	 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
+				break;
 			}
-
-			migrate_vm(vm,candidateVM_index,targetPM,sortetIndexNextH[i]);
-
-			migrate_counter++;
-			// printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
-			// 	 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
-			break;
 		}
-	}
 		
 	}
-	printf("number of migration is %d\n",migrate_counter );
-	printf("########### END OF ORGANIZATION ###########\n");
+	// printf("number of migration is %d\n",migrate_counter );
+	// printf("########### END OF ORGANIZATION ###########\n");
 	return 0;
 }
 
@@ -1227,6 +1295,7 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 					data.numberOfVMs--;
 
 					xbt_dynar_set_as(dataOfPMs[cluster_id],i,DATA_OF_PM,data);
+					break;
 				}
 			}
 			break;
@@ -1240,6 +1309,7 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 	data.numberOfVMs++;
 	xbt_dynar_set_as(dataOfPMs[cluster_id],targetPM_Index,DATA_OF_PM,data);
 
+
 	//	- send a comm_task with size VM memory size --> TODO
 	// double ramsize = 1.f * 1000 * 1000 * 1000; // 1Gbytes
 	// msg_task_t comm_task = MSG_task_create(msg_name, 0,ramsize, NULL);
@@ -1249,7 +1319,19 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 	// 	printf("can not migrate VM %d to PM %d \n",VM_Index,targetPM_Index );
 	// }
 	//	- do the msg_vm_migrate
+	
+	// if(migrate_counter == 13)
+	// {
+	// 	if(MSG_vm_is_migrating(vm) > 0)
+	// 		printf("migration 13 is migrationg already!\n");
+	// 	else if(MSG_vm_is_suspended(vm) > 0)
+	// 		printf("migration 13 is suspended!\n");
+	// 	else if(MSG_vm_is_running(vm) > 0)
+	// 		printf("migration 13 is running\n");
+	// }
 	MSG_vm_migrate(vm,targetPM);
+	// if(migrate_counter == 13)
+	// 	printf("migration 13 finished in migrate function!\n");
 }
 
 int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_vm_t vmReceiver)
@@ -1264,22 +1346,13 @@ int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_v
 	startTime = MSG_get_clock();
 
 	// new way to make dummy delay
-	if( strcmp(senderPM_name,receiverPM_name) == 0 )// PMs are same, So just destroy task as simulation of sending it to colocated VM.
+	if( strcmp(senderPM_name,receiverPM_name) == 0 )// PMs are same, So reduce task size as simulation of sending it to colocated VM.
 	{
 		double task_size = MSG_task_get_bytes_amount(task);
-		double TIMEOUT = GetTimeout(task_size,net_max,NUMBER_OF_VMS/NUMBER_OF_INVOLVED_HOST);
-		//printf("timeout = %lf\n",TIMEOUT );
-		retValue =  MSG_task_send_with_timeout(task,mailBoxName,TIMEOUT);
-		if( retValue == MSG_TIMEOUT ) // could not send msg and timeout accured!
-		{
-			MSG_task_destroy(task);
-			retValue = MSG_OK;
-		}
-	} 
-	else
-	{
-	 	retValue =  MSG_task_send(task,mailBoxName);
+		MSG_task_set_bytes_amount(task,task_size* (1.f/6)); // we suppose 600 us is delay in one cluster, when wm are colocted its' about (50 + 50)us .
 	}
+
+	retValue =  MSG_task_send(task,mailBoxName);
 
 	endTime = MSG_get_clock();
 
@@ -1337,7 +1410,7 @@ int main(int argc, char *argv[])
 
 	
 	NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS ;
-	printf("NUMBER_OF_INVOLVED_HOST=%d\n",NUMBER_OF_INVOLVED_HOST);
+	//printf("NUMBER_OF_INVOLVED_HOST=%d\n",NUMBER_OF_INVOLVED_HOST);
 	//NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1); // minous one is for 1 master host that create and manage cluster (c-52).
 
 	int i = 0;
@@ -1366,7 +1439,7 @@ int main(int argc, char *argv[])
 		printf("Simulation Finished successfully :)\n");
 	else
 		printf("Simulation Failed :(\n");
-	printf("Simulation Time: %g\n", MSG_get_clock());
+	printf("Simulation Time: %lf\n", MSG_get_clock());
 
 	if (res == MSG_OK)
 		return 0;

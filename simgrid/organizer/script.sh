@@ -8,9 +8,9 @@ if [ -f ./result/organizer_off.txt ];then
 	rm ./result/organizer_off.txt
 fi
 
-declare -a number_of_process=( 50000 75000 100000 )
-# declare -a number_of_process=(1000 2000 5000 10000 15000 20000 30000 50000 75000 100000)
-number_of_vm=40
+# declare -a number_of_process=( 50000 75000 100000 )
+declare -a number_of_process=(1000 2000 5000 10000 15000 20000 30000 40000 50000 75000 100000)
+number_of_vm=60
 
 
 # wihthout organization

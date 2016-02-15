@@ -7,8 +7,8 @@
 	<process host="c-20.me" function="get_finalize">
 	</process>
 	<process host="c-20.me" function="organization_manager">
-		<argument value="-26"/>		<!-- organizatin period time in simulation time -->
-		<argument value="9.00"/> 	<!-- VM_DOWN_TIME_SERVICE_SAME_CLUSTER in Seconds -->
-		<argument value="13.00"/> 	<!-- VM_DOWN_TIME_SERVICE_OTHER_CLUSTER in Seconds -->
+		<argument value="-21"/>		<!-- organizatin period time in simulation time -->
+		<argument value="17.01"/> 	<!-- VM_DOWN_TIME_SERVICE_SAME_CLUSTER in Seconds -->
+		<argument value="20.01"/> 	<!-- VM_DOWN_TIME_SERVICE_OTHER_CLUSTER in Seconds -->
 	</process>
 </platform>

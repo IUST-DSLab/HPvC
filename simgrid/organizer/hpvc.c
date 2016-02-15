@@ -31,8 +31,12 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 const int INITIAL_TRANMISSION_RATE = 1;
 const float INITIAL_TRANMISSION_LATENCY = 0.006f; // it's the minimum and defalt latency based on curronet toppology 
 
-const float COMP_PER_COMM = 0.1;	// this is computation per communication rate!
-const int ITERATION_PER_PROCESS = 10;  // number of job done in each task
+const float COMP_PER_COMM = 0.2;			// this is computation per communication rate!
+const float ITERATION_PER_PROCESS_RATIO = 0.5;
+int ITERATION_PER_PROCESS ;			// NUMBER_OF_VMS * ITERATION_PER_PROCESS_RATIO
+int COMP_TASK_SIZE;			// COMP_PER_COMM * ITERATION_PER_PROCESS
+int COMM_TASK_SIZE;			// ITERATION_PER_PROCESS - COMP_TASK_SIZE
+
 
 static int NUMBER_OF_VMS;
 static int NUMBER_OF_PROCESS;
@@ -76,33 +80,35 @@ void free_double(void* pointer)
 
 static void compute_resource_need(int rand_task, int r, int m, int c, resource_need* need)
 {
-	if (((double)(rand_task) / RAND_MAX) < 0.95)
+	if (((double)(rand_task) / RAND_MAX) < 1.f)
 	{
-		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops;		// Based on description of opportunity cost paper
-																// MAX_FLOPS = 1e9
+		//r = r <= 10 ? 10 : r;
+		// need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops;		// Based on description of opportunity cost paper
+		need->cpu = 0.1f * cpu_max_flops;			// MAX_FLOPS =  12* 2e9
+
 		m = m <= 10 ? 10 : m;
 		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
 
-		c = c <= 10? 10 : c;
-		need->net = ((double)(c) / RAND_MAX) * net_max;		// The msg_size based on cpu_need
+		//c = c <= 10? 10 : c;
+		need->net = 0.4f * net_max;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
 		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
-		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
+		need->expected_time = ( need->cpu_time) + ( (need->net / MAX_VM_NET) );
 	}
 	else
 	{
 		r = r <= 10 ? 10 : r;
-		need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 10;		// Based on description of opportunity cost paper
-																// MAX_FLOPS = 1e9
+		//need->cpu = (RAND_MAX / (double)(r)) * cpu_max_flops * 10;		// Based on description of opportunity cost paper
+		need->cpu = ( (double)(r) / RAND_MAX ) * cpu_max_flops * 10;		// MAX_FLOPS = 12* 1e9
+																	
 		m = m <= 10 ? 10 : m;
 		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
 
-		c = c <= 10? 10 : c;
-		need->net = ((double)(c) / RAND_MAX) * net_max;		// The msg_size based on cpu_need
+		//c = c <= 10? 10 : c;
+		need->net = 0.03f * net_max;		// The msg_size based on cpu_need
 																			// 16e6 is bandwidth in byte/sec
-		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
-		need->expected_time = need->cpu_time + need->net / MAX_VM_NET;
+		need->cpu_time = (RAND_MAX / (double)(r)) * 10;		// We can consider virtualization impact here
+		need->expected_time = ( need->cpu_time * COMP_TASK_SIZE ) + ( (need->net / MAX_VM_NET) * COMM_TASK_SIZE );
 	}
 }
 
@@ -129,6 +135,7 @@ static int process_task(int argc, char* argv[])
 	resource_need need;
 	compute_resource_need(rand_task, r, m, c, &need);
 
+
 	/*XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d \
 			cpu_time: %f, expected: %f\n",
 			need.cpu, need.memory, need.net, cluster_id, home_vm, MSG_process_self_PID(), need.cpu_time,
@@ -140,30 +147,16 @@ static int process_task(int argc, char* argv[])
 	sprintf(msg_name, "msg_%d", MSG_process_self_PID());
 	char target_mailbox_name[40];
 	uint8_t* data = xbt_new0(uint8_t, (uint64_t)need.memory);
+	
 
 	double real_start_time = MSG_get_clock();
 
 	// Do the task
 	int i = 0;
-	int compTaskSize = COMP_PER_COMM * ITERATION_PER_PROCESS, p = 0;
-	int commTaskSize = (1-COMP_PER_COMM) * ITERATION_PER_PROCESS, n = 0;
-
-	// if(process_sequence == 107 )
-	// {
-	// 	printf("homeVM:%d targetVM:%d\n",home_vm,target_mailbox);
-	// 	msg_vm_t vmSender;
-	// 	vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
-	// 	if(MSG_vm_is_migrating(vmSender))
-	// 	{
-	// 		i = ITERATION_PER_PROCESS;
-	// 		printf("vm is migrating so break\n");
-	// 	}
-	// 	else
-	// 		i = 0;
-	// }
+	int n = 0 , p = 0;
 	while(i < ITERATION_PER_PROCESS )
 	{
-		if( p < compTaskSize )
+		if( p < COMP_TASK_SIZE )
 		{
 			msg_task_t executive_task = MSG_task_create(exec_name, need.cpu, 0, data);
 			MSG_task_set_data(executive_task, (uint64_t)need.memory);
@@ -174,18 +167,13 @@ static int process_task(int argc, char* argv[])
 			p++;
 			i++;
 		}
-		if( n < commTaskSize && i < ITERATION_PER_PROCESS )
+		if( n < COMM_TASK_SIZE && i < ITERATION_PER_PROCESS )
 		{
 			msg_task_t comm_task = MSG_task_create(msg_name, 0, need.net, NULL);
 			int ret = MSG_OK;
 
 			msg_vm_t vmSender,vmReceiver;
 			vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
-			// while (MSG_vm_is_migrating(vmSender))
-			// {
-			// 	printf("vm%d is migrating, so sleep 1\n",home_vm );
-			// 	sleep(1);
-			// }
 
 			if( i%2 )
 			{
@@ -193,7 +181,7 @@ static int process_task(int argc, char* argv[])
 			}
 			else
 			{
-				target_mailbox =  GetNextTargetMailBox(target_mailbox,n*process_sequence,NUMBER_OF_VMS);
+				target_mailbox =  GetNextTargetMailBox(target_mailbox,process_sequence*n,NUMBER_OF_VMS);
 				vmReceiver = xbt_dynar_get_as(vm_list[cluster_id],target_mailbox, msg_vm_t);
 			}
 
@@ -542,16 +530,16 @@ static int host_load_balance(int argc, char* argv[])
 // the order.
 static int create_tasks(int argc, char* argv[])
 {
-	if (argc < 3)
+	if (argc < 2)
 	{
-		XBT_INFO("Must pass the seed of random numbers and rate of task arrival\n");
+		XBT_INFO("Must pass therate of task arrival\n");
 		return -1;
 	}
 
 	int number_of_processes = NUMBER_OF_PROCESS ;
 	int number_of_vms =  NUMBER_OF_VMS ;
-	unsigned time_seed = atoi(argv[1]);
-	double process_arrival_rate = atof(argv[2]);
+	unsigned time_seed = NUMBER_OF_PROCESS;
+	double process_arrival_rate = atof(argv[1]);
 
 	create_mailbox_processes();
 
@@ -715,19 +703,19 @@ static int get_finalize(int argc, char* argv[])
 	char fin_mailbox[20];
 	sprintf(fin_mailbox, "fin_mailbox");
 
-	msg_task_t r_msg = NULL;
+	
 
 
 	// We must start to listen to incoming messages asynchronously and destroy the message after getting.
 	int i = 0;
 	for (; i < NUMBER_OF_CLUSTERS * number_of_processes; ++i)
 	{
+		msg_task_t r_msg = NULL;
 		int ret = MSG_OK;
 		while ((ret = MSG_task_receive(&r_msg, fin_mailbox) != MSG_OK))
 			XBT_INFO("faile to receive the fin from process\n");
 
 		MSG_task_destroy(r_msg);
-		r_msg = NULL;
 	}
 
 	// We are sure about finalization of all processes
@@ -968,53 +956,7 @@ void delete_organization_matrix(int no_vm)
 }
 
 static int organization_manager(int argc, char* argv[])
-{
-	// test with './hpvc ../cluster2.xml ../deploymentOn.xml 40 108 2>error' to make bug!! :(
-	// {
-	// 	msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],6,msg_vm_t);
-	// 	msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,1,msg_host_t);
-	// 	migrate_vm(vm,6,targetPM,1);
-	// }
-	// int dd = 0;
-	// for( dd = 0;dd < 3; dd++)
-	// {
-	// 	DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],1,DATA_OF_PM);
-	// 	PrintDataOfPM(data);
-
-	// 	msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],data.VMs[0],msg_vm_t);
-	// 	msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,7,msg_host_t);
-
-	// 	migrate_vm(vm,data.VMs[0],targetPM,7);
-
-	// }
-
-	// int haha = 10;
-	// int ha;
-	// for( ha = 0 ; ha < haha ;ha++)
-	// {
-	// 	// migrate 0 to it!
-	// 	{
-	// 		msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],0,msg_vm_t);
-	// 		msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,1,msg_host_t);
-
-	// 		migrate_vm(vm,0,targetPM,1);
-	// 		migrate_counter++;
-	// 		DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],1,DATA_OF_PM);
-	// 		printf("migrate_counter=%d numberOfVMs[%d]=%d\n", migrate_counter,1,data.numberOfVMs);
-	// 	}
-	// 	// migrate 0 from it!
-	// 	{
-	// 		msg_vm_t vm  = xbt_dynar_get_as(vm_list[0],0,msg_vm_t);
-	// 		msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar,0,msg_host_t);
-
-	// 		migrate_vm(vm,0,targetPM,0);
-	// 		migrate_counter++;
-	// 		DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],1,DATA_OF_PM);
-	// 		printf("migrate_counter=%d numberOfVMs[%d]=%d\n", migrate_counter,1,data.numberOfVMs);
-	// 	}
-	// }
-	// return 0;
-	
+{	
 	// Ya Sattar
 	if (argc < 4)
 	{
@@ -1040,6 +982,8 @@ static int organization_manager(int argc, char* argv[])
 
 	// organizer just work on cluseter_id = 0;
 	int cluster_id = 0;
+
+	int lastCandidateVMIndex = -1;
 	// for test, migrate 1 vm from first host to the last host.
 	printf("########### START OF ORGANIZATION ############\n");
 	float H[NUMBER_OF_VMS];
@@ -1125,7 +1069,7 @@ static int organization_manager(int argc, char* argv[])
 		int candidateVM_index = 0;
 		for(i = 0;i<NUMBER_OF_VMS;i++)
 		{
-			if( H[i] > currentH)
+			if( H[i] > currentH && i != lastCandidateVMIndex )
 			{
 				currentH = H[i];
 				candidateVM_index = i;
@@ -1171,6 +1115,18 @@ static int organization_manager(int argc, char* argv[])
 			}
 		}
 
+		int homPM_index = -1;
+		for( i = 0;i<NUMBER_OF_INVOLVED_HOST ;i++)
+		{
+			msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
+			// find if sender and reciever are in the same cluster?
+			sscanf(MSG_host_get_name(MSG_vm_get_pm(vm)),"c-%d.me",&homPM_index);
+			if( (homPM_index < 10 && i < 10) || (homPM_index > 10 &&  i > 10) )
+				nextH[i] += VM_DOWN_TIME_SERVICE_SAME_CLUSTER;
+			else
+				nextH[i] += VM_DOWN_TIME_SERVICE_OTHER_CLUSTER;
+		}
+
 		// sort nextH from minimum to maximum
 		int sortetIndexNextH[NUMBER_OF_INVOLVED_HOST];
 		for (i = 0; i < NUMBER_OF_INVOLVED_HOST; i++)
@@ -1196,8 +1152,7 @@ static int organization_manager(int argc, char* argv[])
 		}
 
 		float VM_DOWN_TIME_SERVICE = 0.f;
-		int homPM_index = -1;
-
+	
 		for( i = 0;i<NUMBER_OF_INVOLVED_HOST;i++)
 		{
 			DATA_OF_PM data;
@@ -1205,17 +1160,25 @@ static int organization_manager(int argc, char* argv[])
 
 			msg_vm_t vm = xbt_dynar_get_as(vm_list[cluster_id], candidateVM_index, msg_vm_t);
 
-			// find if sender and reciever are in the same cluster?
-			sscanf(MSG_host_get_name(MSG_vm_get_pm(vm)),"c-%d.me",&homPM_index);
-			if( (homPM_index < 10 && sortetIndexNextH[i] < 10) || (homPM_index > 10 && sortetIndexNextH[i] > 10) )
-				VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_SAME_CLUSTER;
-			else
-				VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_OTHER_CLUSTER;
+			// // find if sender and reciever are in the same cluster?
+			// sscanf(MSG_host_get_name(MSG_vm_get_pm(vm)),"c-%d.me",&homPM_index);
+			// if( (homPM_index < 10 && sortetIndexNextH[i] < 10) || (homPM_index > 10 && sortetIndexNextH[i] > 10) )
+			// 	VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_SAME_CLUSTER;
+			// else
+			// 	VM_DOWN_TIME_SERVICE = VM_DOWN_TIME_SERVICE_OTHER_CLUSTER;
 
-			if( data.numberOfVMs < PM_CAPACITY &&
-				 (nextH[sortetIndexNextH[i]] + VM_DOWN_TIME_SERVICE) < currentH )
+			// if( i == 0 && currentH > 5.f)
+			// {
+			// 	printf("%d < %d && (%f + %f) < %f \n",data.numberOfVMs,PM_CAPACITY,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH );
+			// }
+
+			if( data.numberOfVMs < PM_CAPACITY && currentH - nextH[sortetIndexNextH[i]] > 5.5 )
 			{
 				
+				// update lastCandidateVMIndex
+				lastCandidateVMIndex = candidateVM_index;
+				//printf("lastCondidVM:%d\n",lastCandidateVMIndex);
+
 				//migrate candidateVM_index to targetPM_index;
 				msg_host_t targetPM = xbt_dynar_get_as(hosts_dynar, sortetIndexNextH[i], msg_host_t);
 				if(strcmp(MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(targetPM)) == 0)
@@ -1254,8 +1217,6 @@ static int organization_manager(int argc, char* argv[])
 				}
 
 				migrate_vm(vm,candidateVM_index,targetPM,sortetIndexNextH[i]);
-				if(migrate_counter == 35)
-					printf("migration 36 done!\n");
 				migrate_counter++;
 				// printf("number Of VMs = %d < 4  and nextH:%.3f + D:%.3f < currnetH : %.3f\n",
 				// 	 data.numberOfVMs,nextH[sortetIndexNextH[i]], VM_DOWN_TIME_SERVICE, currentH);
@@ -1310,28 +1271,18 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 	xbt_dynar_set_as(dataOfPMs[cluster_id],targetPM_Index,DATA_OF_PM,data);
 
 
-	//	- send a comm_task with size VM memory size --> TODO
-	// double ramsize = 1.f * 1000 * 1000 * 1000; // 1Gbytes
-	// msg_task_t comm_task = MSG_task_create(msg_name, 0,ramsize, NULL);
-		
-	// while (MSG_task_send(comm_task, load_balancer_mailbox[cluster_id]) != MSG_OK)
-	// {
-	// 	printf("can not migrate VM %d to PM %d \n",VM_Index,targetPM_Index );
-	// }
-	//	- do the msg_vm_migrate
-	
-	// if(migrate_counter == 13)
-	// {
-	// 	if(MSG_vm_is_migrating(vm) > 0)
-	// 		printf("migration 13 is migrationg already!\n");
-	// 	else if(MSG_vm_is_suspended(vm) > 0)
-	// 		printf("migration 13 is suspended!\n");
-	// 	else if(MSG_vm_is_running(vm) > 0)
-	// 		printf("migration 13 is running\n");
-	// }
 	MSG_vm_migrate(vm,targetPM);
-	// if(migrate_counter == 13)
-	// 	printf("migration 13 finished in migrate function!\n");
+	send a comm_task with size VM memory size
+	double ramsize = 1.f * 1000 * 1000 * 1000; // 1Gbytes
+	msg_task_t comm_task = MSG_task_create("simulating_hot_migration_cost", 0,ramsize, NULL);
+	
+	char target_mailbox_name[40];
+	sprintf(target_mailbox_name, "mailbox_0_%d",VM_Index);
+	while (MSG_task_send(comm_task,target_mailbox_name) != MSG_OK)
+	{
+		printf("can not migrate VM %d to PM %d \n",VM_Index,targetPM_Index );
+	}
+	
 }
 
 int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_vm_t vmReceiver)
@@ -1349,7 +1300,8 @@ int send_task( msg_task_t task, const char *mailBoxName,msg_vm_t vmSender, msg_v
 	if( strcmp(senderPM_name,receiverPM_name) == 0 )// PMs are same, So reduce task size as simulation of sending it to colocated VM.
 	{
 		double task_size = MSG_task_get_bytes_amount(task);
-		MSG_task_set_bytes_amount(task,task_size* (1.f/6)); // we suppose 600 us is delay in one cluster, when wm are colocted its' about (50 + 50)us .
+		//printf("reduce task size from %f to %f\n",task_size,task_size * (1.f/6) );
+		MSG_task_set_bytes_amount(task,	(task_size * 0.01f) ); // we suppose 600 us is delay in one cluster, when wm are colocted its' about (50 + 50)us .
 	}
 
 	retValue =  MSG_task_send(task,mailBoxName);
@@ -1410,6 +1362,11 @@ int main(int argc, char *argv[])
 
 	
 	NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS ;
+	
+	ITERATION_PER_PROCESS = NUMBER_OF_VMS * ITERATION_PER_PROCESS_RATIO; 
+	COMP_TASK_SIZE = COMP_PER_COMM * ITERATION_PER_PROCESS;
+	COMM_TASK_SIZE = ITERATION_PER_PROCESS - COMP_PER_COMM; // to avoid infinite loop, not using (1-COMP_PER_COMM) * ITERATION_PER_PROCESS)
+
 	//printf("NUMBER_OF_INVOLVED_HOST=%d\n",NUMBER_OF_INVOLVED_HOST);
 	//NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1); // minous one is for 1 master host that create and manage cluster (c-52).
 

@@ -32,7 +32,7 @@ const int INITIAL_TRANMISSION_RATE = 1;
 const float INITIAL_TRANMISSION_LATENCY = 0.006f; // it's the minimum and defalt latency based on curronet toppology 
 
 const float COMP_PER_COMM = 0.2;			// this is computation per communication rate!
-const float ITERATION_PER_PROCESS_RATIO = 0.5;
+const float ITERATION_PER_PROCESS_RATIO = 0.6;
 int ITERATION_PER_PROCESS ;			// NUMBER_OF_VMS * ITERATION_PER_PROCESS_RATIO
 int COMP_TASK_SIZE;			// COMP_PER_COMM * ITERATION_PER_PROCESS
 int COMM_TASK_SIZE;			// ITERATION_PER_PROCESS - COMP_TASK_SIZE
@@ -1272,7 +1272,7 @@ void migrate_vm(msg_vm_t vm,int VM_Index,msg_host_t targetPM,int targetPM_Index)
 
 
 	MSG_vm_migrate(vm,targetPM);
-	send a comm_task with size VM memory size
+	//send a comm_task with size VM memory size
 	double ramsize = 1.f * 1000 * 1000 * 1000; // 1Gbytes
 	msg_task_t comm_task = MSG_task_create("simulating_hot_migration_cost", 0,ramsize, NULL);
 	

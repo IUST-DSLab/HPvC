@@ -4,15 +4,15 @@
 #define NUMBER_OF_CLUSTERS 1
 #define MAX_VM_MEMORY 1e9
 #define MAX_VM_NET 1.25e8
-#define PM_CAPACITY 4
-#define IS_ENABLE_GUEST_LOAD_BALANCE 0
+#define PM_CAPACITY 5
+#define IS_ENABLE_GUEST_LOAD_BALANCE 1
 #define ALPHA 0.1f
 
 typedef struct PMs_data
 {
 	const char *PM_name;
 	int numberOfVMs;
-	int VMs[4];
+	int VMs[PM_CAPACITY];
 }DATA_OF_PM;
 
 

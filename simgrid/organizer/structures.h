@@ -6,7 +6,6 @@
 #define MAX_VM_NET 1.25e8
 #define PM_CAPACITY 5
 #define IS_ENABLE_GUEST_LOAD_BALANCE 1
-#define ALPHA 0.1f
 
 typedef struct PMs_data
 {

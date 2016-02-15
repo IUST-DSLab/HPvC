@@ -31,11 +31,15 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(msg_test, "Messages specific for this msg example")
 const int INITIAL_TRANMISSION_RATE = 1;
 const float INITIAL_TRANMISSION_LATENCY = 0.006f; // it's the minimum and defalt latency based on curronet toppology 
 
-const float COMP_PER_COMM = 0.2;			// this is computation per communication rate!
+float ALPHA = 0.1f; // ALPHA is history ratio in calculating nex communication matrixes
+float COMP_PER_COMM = 0.2;			// this is computation per communication rate!
+
 const float ITERATION_PER_PROCESS_RATIO = 0.6;
 int ITERATION_PER_PROCESS ;			// NUMBER_OF_VMS * ITERATION_PER_PROCESS_RATIO
 int COMP_TASK_SIZE;			// COMP_PER_COMM * ITERATION_PER_PROCESS
 int COMM_TASK_SIZE;			// ITERATION_PER_PROCESS - COMP_TASK_SIZE
+
+
 
 
 static int NUMBER_OF_VMS;
@@ -90,7 +94,9 @@ static void compute_resource_need(int rand_task, int r, int m, int c, resource_n
 		need->memory = (double)(m) / (RAND_MAX) * memory_max;		// MAX_MEM 0f each vm is 1e9
 
 		//c = c <= 10? 10 : c;
-		need->net = 0.4f * net_max;		// The msg_size based on cpu_need
+		//need->net = 0.4f * net_max;		// The msg_size based on cpu_need
+		need->net = 0.4 * net_max;		// The msg_size based on cpu_need
+		
 																			// 16e6 is bandwidth in byte/sec
 		need->cpu_time = RAND_MAX / (double)(r);		// We can consider virtualization impact here
 		need->expected_time = ( need->cpu_time) + ( (need->net / MAX_VM_NET) );
@@ -136,11 +142,6 @@ static int process_task(int argc, char* argv[])
 	compute_resource_need(rand_task, r, m, c, &need);
 
 
-	/*XBT_INFO("process with cpu:%f, memory: %f, net: %f on cluster: %d, vm: %d, pid: %d \
-			cpu_time: %f, expected: %f\n",
-			need.cpu, need.memory, need.net, cluster_id, home_vm, MSG_process_self_PID(), need.cpu_time,
-			need.expected_time); */
-
 	char exec_name[20];
 	char msg_name[20];
 	sprintf(exec_name, "task_%d", MSG_process_self_PID());
@@ -154,6 +155,38 @@ static int process_task(int argc, char* argv[])
 	// Do the task
 	int i = 0;
 	int n = 0 , p = 0;
+
+	// if( home_vm == 0)
+	// {
+	// 	int ha = 0;
+	// 	for( ha = 1 ;ha <20;ha++)
+	// 	{
+	// 		double start = 0.0,end = 0.0;
+	// 		start = MSG_get_clock();
+	// 		double ramsize = 1.f * 1000 * 1000 * 1000; // 1Gbytes
+	// 		msg_task_t comm_task = MSG_task_create("simulating_hot_migration_cost", 0,ramsize, NULL);
+			
+	// 		char target_mailbox_name[40];
+	// 		DATA_OF_PM data = xbt_dynar_get_as(dataOfPMs[0],ha,DATA_OF_PM);
+
+	// 		sprintf(target_mailbox_name, "mailbox_0_%d",data.VMs[0]);
+	// 		while (MSG_task_send(comm_task,target_mailbox_name) != MSG_OK)
+	// 		{
+	// 			printf("can not migrate VM %d to PM %d \n",ha,ha );
+	// 		}
+	// 		end = MSG_get_clock();
+	// 		msg_vm_t vm = xbt_dynar_get_as(vm_list[0],home_vm,msg_vm_t);
+	// 		msg_vm_t target_vm = xbt_dynar_get_as(vm_list[0],data.VMs[0],msg_vm_t);
+
+	// 		int targetPM_Id;
+	// 		sscanf(MSG_host_get_name(MSG_vm_get_pm(target_vm)),"c-%d.me",&targetPM_Id);
+	// 		if(end - start > 19 && targetPM_Id >= 10)
+	// 			printf("migrte from %s to %s taks %f\n",MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(MSG_vm_get_pm(target_vm)),end - start );
+	// 		if(end - start > 15 && targetPM_Id < 10)
+	// 			printf("migrte from %s to %s taks %f\n",MSG_host_get_name(MSG_vm_get_pm(vm)),MSG_host_get_name(MSG_vm_get_pm(target_vm)),end - start );
+	// 	}
+	// }
+
 	while(i < ITERATION_PER_PROCESS )
 	{
 		if( p < COMP_TASK_SIZE )
@@ -195,50 +228,6 @@ static int process_task(int argc, char* argv[])
 			i++;
 		}
 	}
-
-	// msg_task_t executive_task = MSG_task_create(exec_name, need.cpu, 0, data);
-	// MSG_task_set_data(executive_task, (uint64_t)need.memory);
-
-	// msg_error_t error = MSG_task_execute(executive_task);
-	// if (error != MSG_OK)
-	// 	XBT_INFO("Failed to execute task! %s\n", exec_name);
-
-	// int ret = MSG_OK;
-	// // increase number of send msg to 10 -> 50% to target_mailbox and 50% to random mailbox
-	// int i = 0;
-	// int NUMBER_OF_COMM_MSG = 20;
-	// for( i = 0;i< NUMBER_OF_COMM_MSG;i++)
-	// {
-	// 	msg_task_t comm_task = MSG_task_create(msg_name, 0, need.net, NULL);
-	// 	ret = MSG_OK;
-
-	// 	msg_vm_t vmSender,vmReceiver;
-	// 	vmSender = xbt_dynar_get_as(vm_list[cluster_id],home_vm, msg_vm_t);
-
-	// 	if( i%2 )
-	// 	{
-	// 		vmReceiver = xbt_dynar_get_as(vm_list[cluster_id],target_mailbox, msg_vm_t);
-	// 	}
-	// 	else
-	// 	{
-	// 		target_mailbox =  ( target_mailbox + 10 ) % NUMBER_OF_VMS;
-	// 		vmReceiver = xbt_dynar_get_as(vm_list[cluster_id],target_mailbox, msg_vm_t);
-	// 	}
-
-	// 	sprintf(target_mailbox_name, "mailbox_%d_%d", cluster_id, target_mailbox);
-	// 	while ((ret = send_task(comm_task, target_mailbox_name,vmSender,vmReceiver)) != MSG_OK)
-	// 	{
-	// 		XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
-	// 				target_mailbox_name);
-	// 	}
-	// }
-	
-
-	// while ((ret = MSG_task_send(comm_task,target_mailbox_name)) != MSG_OK)
-	// {
-	// 	XBT_INFO("process_%d failed to send message to mailbox:%s\n", MSG_process_self_PID(), 
-	// 			target_mailbox_name);
-	// }
 
 	double real_finish_time = MSG_get_clock();
 
@@ -1337,7 +1326,9 @@ int main(int argc, char *argv[])
 
 	if (argc < 5)
 	{
-		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml <number of VMs per cluster> <number of processes>\n", argv[0]);
+		XBT_CRITICAL("Usage: %s cluster.xml deployment.xml\n\
+					<number of VMs per cluster> <number of processes>\n\
+					<COPMUTATION_PER_COMMUNICATION_RATIO [0-1) > <ALPHA(history param [0-1) >", argv[0]);
 		exit(1);
 	}
 	/* Argument checking */
@@ -1359,6 +1350,10 @@ int main(int argc, char *argv[])
 
 	NUMBER_OF_VMS =  atoi(argv[3]);
 	NUMBER_OF_PROCESS = atoi(argv[4]);
+	if(argc >= 6)
+		COMP_PER_COMM = atof(argv[5]);		// the default value is set when defined
+	if( argc == 7)
+		ALPHA = atof(argv[6]);		// the default value is set when defined
 
 	
 	NUMBER_OF_INVOLVED_HOST = (xbt_dynar_length(hosts_dynar) - 1) / NUMBER_OF_CLUSTERS ;
